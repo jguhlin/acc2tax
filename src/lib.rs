@@ -45,62 +45,6 @@ static NAMES: OnceCell<Vec<String>>       = OnceCell::new();
 static TAXON2PARENT: OnceCell<Vec<usize>> = OnceCell::new();
 static TAXON_RANK: OnceCell<Vec<String>>  = OnceCell::new();
 
-/* pub fn parse_line(
-    data: Vec<Vec<u8>>
-) -> Result {
-    let taxon = std::str::from_utf8(&data[1]).unwrap().parse::<u32>().unwrap();
-    let acc: Vec<u8> = data[0];
-    let short: Vec<u8> = acc[0..2].to_vec();
-
-    (short, acc, taxon.clone())
-} */
-
-
-/*
-fn into_map_previous(
-    mut acc2tax: Acc2Tax, 
-    data: (Vec<u8>, Vec<u8>, u32)) -> Acc2Tax {
-    
-    let (short, acc, taxon) = data;
-
-    let secondary = match acc2tax.get_mut(&short) {
-        Some(x) => x,
-        None    => {
-                    let mut new_hash: HashMap<Vec<u8>, u32, BuildHasherDefault<XxHash>> = 
-                        Default::default();
-                    new_hash.reserve(100_000);
-                    acc2tax.insert(short.clone(), new_hash);
-                    acc2tax.get_mut(&short).unwrap()
-            }
-        };
-
-        secondary.insert(acc, taxon);
-    acc2tax
-} */
-
-/*
-fn merge_maps(
-    a: &mut Acc2Tax,
-    b: Acc2Tax) {
-
-    for i in b.keys() {
-        let bmap = b.get(i).unwrap();
-        // println!("bmap {:#?} {:#?}", i, bmap);
-
-        let secondary = match a.get_mut(i) {
-            Some(x) => x,
-            None    => {
-                        let new_hash: HashMap<Vec<u8>, u32, BuildHasherDefault<XxHash>> = 
-                            Default::default();
-                        a.insert(i.clone(), new_hash);
-                        a.get_mut(i).unwrap()
-                }
-            };
-
-        secondary.extend(bmap.into_iter().map(|(k, v)| (k.clone(), v.clone())))
-    }
-} */
-
 fn load_taxon(filename: &str) -> Acc2TaxInner {
     let fh = BufReader::with_capacity(64 * 1024 * 1024, File::open(filename).unwrap());
     bincode::deserialize_from(snap::Reader::new(fh)).expect("Unable to read file...")
