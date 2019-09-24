@@ -12,7 +12,7 @@ fn process_taxonomy() {
                 "/mnt/data/nt/taxdmp/names.dmp".to_string());
     println!("Time to parse and save file... {}", now.elapsed().as_secs());
 
-    assert_eq!(acc2tax::check_taxon("X59856.2".to_string()), 9913);
+    assert_eq!(acc2tax::get_taxon("X59856.2".to_string()), 9913);
 
     
     

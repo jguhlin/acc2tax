@@ -50,7 +50,8 @@ fn load_taxon(filename: &str) -> Acc2TaxInner {
     bincode::deserialize_from(snap::Reader::new(fh)).expect("Unable to read file...")
 }
 
-pub fn check_taxon(accession: String) -> u32 {
+#[pyfunction]
+pub fn get_taxon(accession: String) -> u32 {
 
     let accession = accession.as_bytes().to_vec();
     let short: u32 = parser::shorten(&accession[0..4]);
@@ -76,10 +77,10 @@ fn load_existing() -> (Option<Acc2Tax>, Vec<String>, Vec<usize>, Vec<String>) {
 }
 
 #[pyfunction]
-// Initializes the database
 pub fn init(num_threads: usize, acc2tax_filename: String, nodes_filename: String, names_filename: String) {
+// Initializes the database
 
-let (data, names, taxon_to_parent, taxon_rank);
+    let (data, names, taxon_to_parent, taxon_rank);
 
     if Path::new("names.bc").exists() {
         data = load_existing();
@@ -117,9 +118,12 @@ let (data, names, taxon_to_parent, taxon_rank);
     println!("Loaded taxonomy databases");
 }
 
-/// This module is a python module implemented in Rust.
 #[pymodule]
 fn acc2tax(py: Python, m: &PyModule) -> PyResult<()> {
     m.add_wrapped(wrap_pyfunction!(init))?;
+    m.add_wrapped(wrap_pyfunction!(get_taxon))?;
+    // Need a function to get the rank of a taxon
+    // Need a function to get the parents
+    // Need a function to get the parents & ranks given a taxon (or accession)
     Ok(())
 }
