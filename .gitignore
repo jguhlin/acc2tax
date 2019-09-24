@@ -1,0 +1,17 @@
+/target
+**/*.rs.bk
+*.fasta
+*.faa
+*.fna
+*.fai
+callgrind*
+*.gz
+serde.bincode
+*.bincode
+.vscode/*
+*.workspace
+*.vec
+*.bc
+*.profraw
+*.json
+acc2tax_db/*

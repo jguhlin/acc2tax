@@ -1,0 +1,181 @@
+extern crate flate2;
+extern crate itertools;
+extern crate bincode;
+extern crate mimalloc;
+extern crate serde;
+extern crate bytelines;
+extern crate snap;
+
+use mimalloc::MiMalloc;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
+
+mod parser;
+
+use std::str;
+use std::sync::Arc;
+use std::io::{BufReader, BufRead};
+use std::fs::File;
+use std::hash::BuildHasherDefault;
+use std::collections::HashMap;
+use std::thread::Builder;
+use std::path::Path;
+
+use once_cell::sync::OnceCell;
+
+use twox_hash::XxHash;
+
+use itertools::Itertools;
+
+use pyo3::prelude::*;
+use pyo3::wrap_pyfunction;
+
+use crossbeam::utils::Backoff;
+use crossbeam::atomic::AtomicCell;
+use crossbeam::queue::{ArrayQueue, PushError, SegQueue};
+
+use bytelines::*;
+
+pub type Acc2TaxInner = HashMap<Vec<u8>, u32, BuildHasherDefault<XxHash>>;
+pub type Acc2Tax = HashMap<u32, Acc2TaxInner, BuildHasherDefault<XxHash>>;
+pub type Result = (u32, Vec<u8>, u32);
+
+static NAMES: OnceCell<Vec<String>>       = OnceCell::new();
+static TAXON2PARENT: OnceCell<Vec<usize>> = OnceCell::new();
+static TAXON_RANK: OnceCell<Vec<String>>  = OnceCell::new();
+
+/* pub fn parse_line(
+    data: Vec<Vec<u8>>
+) -> Result {
+    let taxon = std::str::from_utf8(&data[1]).unwrap().parse::<u32>().unwrap();
+    let acc: Vec<u8> = data[0];
+    let short: Vec<u8> = acc[0..2].to_vec();
+
+    (short, acc, taxon.clone())
+} */
+
+
+/*
+fn into_map_previous(
+    mut acc2tax: Acc2Tax, 
+    data: (Vec<u8>, Vec<u8>, u32)) -> Acc2Tax {
+    
+    let (short, acc, taxon) = data;
+
+    let secondary = match acc2tax.get_mut(&short) {
+        Some(x) => x,
+        None    => {
+                    let mut new_hash: HashMap<Vec<u8>, u32, BuildHasherDefault<XxHash>> = 
+                        Default::default();
+                    new_hash.reserve(100_000);
+                    acc2tax.insert(short.clone(), new_hash);
+                    acc2tax.get_mut(&short).unwrap()
+            }
+        };
+
+        secondary.insert(acc, taxon);
+    acc2tax
+} */
+
+/*
+fn merge_maps(
+    a: &mut Acc2Tax,
+    b: Acc2Tax) {
+
+    for i in b.keys() {
+        let bmap = b.get(i).unwrap();
+        // println!("bmap {:#?} {:#?}", i, bmap);
+
+        let secondary = match a.get_mut(i) {
+            Some(x) => x,
+            None    => {
+                        let new_hash: HashMap<Vec<u8>, u32, BuildHasherDefault<XxHash>> = 
+                            Default::default();
+                        a.insert(i.clone(), new_hash);
+                        a.get_mut(i).unwrap()
+                }
+            };
+
+        secondary.extend(bmap.into_iter().map(|(k, v)| (k.clone(), v.clone())))
+    }
+} */
+
+fn load_taxon(filename: &str) -> Acc2TaxInner {
+    let fh = BufReader::with_capacity(64 * 1024 * 1024, File::open(filename).unwrap());
+    bincode::deserialize_from(snap::Reader::new(fh)).expect("Unable to read file...")
+}
+
+pub fn check_taxon(accession: String) -> u32 {
+
+    let accession = accession.as_bytes().to_vec();
+    let short: u32 = parser::shorten(&accession[0..4]);
+    
+    let map = load_taxon(&format!("acc2tax_db/{}.bc", &short.to_string()));
+
+    *map.get(&accession).unwrap()
+    
+}
+
+fn load_existing() -> (Option<Acc2Tax>, Vec<String>, Vec<usize>, Vec<String>) {
+    let names_fh = BufReader::with_capacity(64 * 1024 * 1024, File::open("names.bc").unwrap());
+    let names = bincode::deserialize_from(snap::Reader::new(names_fh)).expect("Unable to read file...");
+
+    let t2p_fh = BufReader::with_capacity(64 * 1024 * 1024, File::open("t2p.bc").unwrap());
+    let taxon_to_parent = bincode::deserialize_from(snap::Reader::new(t2p_fh)).expect("Unable to read file...");
+
+    let taxon_rank_fh = BufReader::with_capacity(64 * 1024 * 1024, File::open("taxon_rank.bc").unwrap());
+    let taxon_rank = bincode::deserialize_from(snap::Reader::new(taxon_rank_fh)).expect("Unable to read file...");
+
+    (None, names, taxon_to_parent, taxon_rank)
+
+}
+
+#[pyfunction]
+// Initializes the database
+pub fn init(num_threads: usize, acc2tax_filename: String, nodes_filename: String, names_filename: String) {
+
+let (data, names, taxon_to_parent, taxon_rank);
+
+    if Path::new("names.bc").exists() {
+        data = load_existing();
+    } else {
+        println!("Binary files do not exist, generating... This can take up to 60 minutes the first time...");
+        data = parser::read_taxonomy(num_threads, acc2tax_filename, nodes_filename, names_filename);
+
+        for (short, all) in data.0.unwrap().iter() {
+            let mut acc2tax_fh = snap::Writer::new(File::create(format!("acc2tax_db/{}.bc", short.to_string())).unwrap());
+            bincode::serialize_into(&mut acc2tax_fh, &all).expect("Unable to write to bincode file");
+        }
+
+        // let mut acc2tax_fh = snap::Writer::new(File::create("acc2tax.bc").unwrap());
+        // bincode::serialize_into(&mut acc2tax_fh, &data.0).expect("Unable to write to bincode file");
+        // serde_json::to_writer(acc2tax_fh, &acc2tax).expect("Unable to write JSON file...");
+
+        let mut names_fh = snap::Writer::new(File::create("names.bc").unwrap());
+        bincode::serialize_into(&mut names_fh, &data.1).expect("Unable to write to bincode file");
+
+        let mut taxon_to_parent_fh = snap::Writer::new(File::create("t2p.bc").unwrap());
+        bincode::serialize_into(&mut taxon_to_parent_fh, &data.2).expect("Unable to write to bincode file");
+
+        let mut taxon_rank_fh = snap::Writer::new(File::create("taxon_rank.bc").unwrap());
+        bincode::serialize_into(&mut taxon_rank_fh, &data.3).expect("Unable to write to bincode file");
+
+    }
+
+    names = data.1;
+    taxon_to_parent = data.2;
+    taxon_rank = data.3;
+
+    NAMES.set(names).expect("Unable to set. Already initialized?");
+    TAXON2PARENT.set(taxon_to_parent).expect("Unable to set. Already initialized?");
+    TAXON_RANK.set(taxon_rank).expect("Unable to set. Already initialized?");
+    println!("Loaded taxonomy databases");
+}
+
+/// This module is a python module implemented in Rust.
+#[pymodule]
+fn acc2tax(py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_wrapped(wrap_pyfunction!(init))?;
+    Ok(())
+}
