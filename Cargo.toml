@@ -26,6 +26,6 @@ snap = "0.2.5"
 version = "0.8.0"
 features = ["extension-module"]
 
-# [profile.release]
-# opt-level = 3
+[profile.release]
+opt-level = 3
 # debug = true # Uncomment when needing valgrind

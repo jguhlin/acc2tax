@@ -21,6 +21,7 @@ use std::hash::BuildHasherDefault;
 use std::collections::HashMap;
 use std::thread::Builder;
 use std::path::Path;
+use std::collections::HashSet;
 
 use once_cell::sync::OnceCell;
 
@@ -39,6 +40,7 @@ use bytelines::*;
 
 pub type Acc2TaxInner = HashMap<Vec<u8>, u32, BuildHasherDefault<XxHash>>;
 pub type Acc2Tax = HashMap<u32, Acc2TaxInner, BuildHasherDefault<XxHash>>;
+pub type TaxonLevels2Acc = HashMap<u32, Vec<(Vec<u8>, u32)>>;
 pub type Result = (u32, Vec<u8>, u32);
 
 static NAMES: OnceCell<Vec<String>>       = OnceCell::new();
@@ -77,18 +79,43 @@ fn load_existing() -> (Option<Acc2Tax>, Vec<String>, Vec<usize>, Vec<String>) {
 }
 
 #[pyfunction]
+pub fn get_complete_taxonomy (taxon: usize) -> Vec<usize> {
+    let mut complete_taxon: Vec<usize> = Vec::with_capacity(20);
+    
+    let mut cur_taxon = taxon;
+    let taxon_to_parent = TAXON2PARENT.get().expect("Data not initialized");
+
+    complete_taxon.push(cur_taxon);
+
+    while cur_taxon != 1 {
+        cur_taxon = *taxon_to_parent.get(cur_taxon).or(Some(&1)).unwrap();
+        complete_taxon.push(cur_taxon);
+    }
+
+    complete_taxon.shrink_to_fit();
+    complete_taxon
+}
+
+#[pyfunction]
 pub fn init(num_threads: usize, acc2tax_filename: String, nodes_filename: String, names_filename: String) {
 // Initializes the database
 
     let (data, names, taxon_to_parent, taxon_rank);
+    let mut new = false;
+    let mut acc2tax: Acc2Tax = Default::default();
+
 
     if Path::new("names.bc").exists() {
         data = load_existing();
     } else {
+        new = true;
         println!("Binary files do not exist, generating... This can take up to 60 minutes the first time...");
         data = parser::read_taxonomy(num_threads, acc2tax_filename, nodes_filename, names_filename);
 
-        for (short, all) in data.0.unwrap().iter() {
+        acc2tax = data.0.unwrap().clone();
+
+        // TODO: This part should be serialized, actually...
+        for (short, all) in acc2tax.iter() {
             let mut acc2tax_fh = snap::Writer::new(File::create(format!("acc2tax_db/{}.bc", short.to_string())).unwrap());
             bincode::serialize_into(&mut acc2tax_fh, &all).expect("Unable to write to bincode file");
         }
@@ -115,6 +142,39 @@ pub fn init(num_threads: usize, acc2tax_filename: String, nodes_filename: String
     NAMES.set(names).expect("Unable to set. Already initialized?");
     TAXON2PARENT.set(taxon_to_parent).expect("Unable to set. Already initialized?");
     TAXON_RANK.set(taxon_rank).expect("Unable to set. Already initialized?");
+
+    if new {
+
+        let mut taxon_level_to_acc: TaxonLevels2Acc = HashMap::with_capacity(64_000);
+        let taxon_rank = TAXON_RANK.get().expect("Taxon rank not properly loaded...");
+        let taxon_to_parent = TAXON2PARENT.get().expect("Taxon2Parent not properly loaded");
+
+        for (_, all) in acc2tax.iter() {
+            for (acc, &tax_id) in all.iter() {
+                let mut work_tax_id = tax_id;
+                loop {
+                    if work_tax_id == 0 { break; }
+                    if work_tax_id == 1 { break; }
+
+                    let parent_tax_id: u32 = taxon_to_parent[work_tax_id as usize] as u32;
+                    
+                    let entry = taxon_level_to_acc
+                                    .entry(parent_tax_id)
+                                    .or_insert_with(Vec::new);
+
+                    entry.push( (acc.clone(), work_tax_id) );
+
+                    // Iteratively move up...
+                    work_tax_id = parent_tax_id;
+                
+                }
+            }
+        }
+
+        let mut taxon_level_to_acc_fh = snap::Writer::new(File::create("taxon_level_to_acc.bc").unwrap());
+        bincode::serialize_into(&mut taxon_level_to_acc_fh, &taxon_level_to_acc).expect("Unable to write to bincode file");
+    }
+
     println!("Loaded taxonomy databases");
 }
 
@@ -122,6 +182,7 @@ pub fn init(num_threads: usize, acc2tax_filename: String, nodes_filename: String
 fn acc2tax(py: Python, m: &PyModule) -> PyResult<()> {
     m.add_wrapped(wrap_pyfunction!(init))?;
     m.add_wrapped(wrap_pyfunction!(get_taxon))?;
+    m.add_wrapped(wrap_pyfunction!(get_complete_taxonomy))?;
     // Need a function to get the rank of a taxon
     // Need a function to get the parents
     // Need a function to get the parents & ranks given a taxon (or accession)

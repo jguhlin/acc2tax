@@ -65,11 +65,11 @@ pub fn read_taxonomy(num_threads: usize, acc2tax_filename: String, nodes_filenam
                         };
 
     let nodes_child = match Builder::new()
-                    .name("ParseNodes".into())
-                    .spawn(move || parse_nodes(nodes_filename)) {
-                        Ok(x) => x,
-                        Err(y) => panic!("{}", y)
-                    };
+                        .name("ParseNodes".into())
+                        .spawn(move || parse_nodes(nodes_filename)) {
+                            Ok(x) => x,
+                            Err(y) => panic!("{}", y)
+                        };
 
 
     let gb2accession_fh = File::open(acc2tax_filename.clone()).unwrap();
