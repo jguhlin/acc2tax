@@ -1,5 +1,7 @@
-
+use indicatif::ProgressBar;
+use indicatif::ProgressStyle;
 use super::*;
+use thincollections::thin_vec::ThinVec;
 
 enum ThreadCommand<T> {
     Work(T),
@@ -44,7 +46,7 @@ fn into_map(
         None    => {
                     let mut new_hash: HashMap<Vec<u8>, u32, BuildHasherDefault<XxHash>> = 
                         Default::default();
-                    new_hash.reserve(10_000);
+                    new_hash.reserve(100);
                     acc2tax.insert(short.clone(), new_hash);
                     acc2tax.get_mut(&short).unwrap()
             }
@@ -71,18 +73,27 @@ pub fn read_taxonomy(num_threads: usize, acc2tax_filename: String, nodes_filenam
                             Err(y) => panic!("{}", y)
                         };
 
-
     let gb2accession_fh = File::open(acc2tax_filename.clone()).unwrap();
-    
+
+    let pb = ProgressBar::new(gb2accession_fh.metadata().unwrap().len());
+    pb.set_style(ProgressStyle::default_bar()
+        .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {eta} {msg}")
+        .progress_chars("█▇▆▅▄▃▂▁  "));
+
+    let gb2accession_fh = BufReader::with_capacity(64 * 1024 * 1024, pb.wrap_read(gb2accession_fh));
     let gb2accession = flate2::read::GzDecoder::new(gb2accession_fh);
-    let gb2accession = BufReader::with_capacity(64 * 1024 * 1024, gb2accession);
-    
+    let gb2accession = BufReader::with_capacity(256 * 1024 * 1024, gb2accession);
     let backoff = Backoff::new();
 
     let mut children = Vec::new();
-    let queue = Arc::new(ArrayQueue::<ThreadCommand<Vec<Vec<u8>>>>::new(256));
+    pb.set_message("Creating queue");
+    let queue = Arc::new(ArrayQueue::<ThreadCommand<Vec<Vec<u8>>>>::new(1024));
+    pb.set_message("Created queue");
     // let results = Arc::new(SegQueue::<Acc2Tax>::new());
-    let results = Arc::new(SegQueue::<Vec<Result>>::new());
+    // let results = Arc::new(SegQueue::<Vec<Result>>::new());
+    pb.set_message("Creating results queue");
+    let results = Arc::new(ArrayQueue::<Vec<Result>>::new(1024));
+    pb.set_message("Created results queue"); 
 
     let jobs = Arc::new(AtomicCell::new(0 as usize));
 
@@ -116,20 +127,39 @@ pub fn read_taxonomy(num_threads: usize, acc2tax_filename: String, nodes_filenam
 
     let mut lines = 0;
 
-    for chunk in gb2accession.byte_lines().into_iter().skip(1).chunks(500).into_iter() {
+    /* gb2accession
+        .byte_lines()
+        .into_iter()
+        .skip(1)
+        .par_bridge()
+        .for_each(|line| { 
+            let mut result = results.push(parse_line(&line.unwrap()));
+
+            // lines += 1;
+            
+            while let Err(PushError(x)) = result {
+                // pb.set_message("Full!");
+                result = results.push(x);    
+            }
+
+            // pb.set_message(&format!("{} lines", lines));
+
+        });
+
+    println!("Done with iter");
+    println!(); */
+
+    for chunk in gb2accession.byte_lines().into_iter().skip(1).chunks(2 * 1024 * 1024).into_iter() {
         let work = chunk.map(|x| x.unwrap()).collect::<Vec<Vec<u8>>>();
 
         lines += work.len();
-        if (lines % 1_000_000) == 0 {
-            println!("{} lines... {} in queue", lines, queue.len());
-        }
+        pb.set_message(&format!("{} lines", lines));
 
         jobs.fetch_add(1);
         let wp = ThreadCommand::Work(work);
         let mut result = queue.push(wp);
 
         while let Err(PushError(wp)) = result {
-            backoff.spin();
             result = queue.push(wp);
         }
     }
@@ -151,16 +181,22 @@ pub fn read_taxonomy(num_threads: usize, acc2tax_filename: String, nodes_filenam
         child.join().expect("Unable to  join child thread");
     }
 
-    let acc2tax = merger_child.join().expect("Unable to join merger thread");
+    let mut acc2tax = merger_child.join().expect("Unable to join merger thread");
+    acc2tax.shrink_to_fit();
+    for (k,v) in acc2tax.iter_mut() {
+        v.shrink_to_fit();
+    }
 
     let names = names_child.join().expect("Unable to join taxonomy names thread");
     let (taxon_to_parent, taxon_rank) = nodes_child.join().expect("Unable to join taxonomy nodes thread");
+
+    pb.finish_with_message("Complete");
 
     (Some(acc2tax), names, taxon_to_parent, taxon_rank)
 }
 
 fn _worker_thread(queue: Arc<ArrayQueue<ThreadCommand<Vec<Vec<u8>>>>>, 
-                    results: Arc<SegQueue<Vec<Result>>>, 
+                    results: Arc<ArrayQueue<Vec<Result>>>, 
                     // results: Arc<SegQueue<Acc2Tax>>, 
                     jobs: Arc<AtomicCell<usize>>) {
 
@@ -171,12 +207,9 @@ fn _worker_thread(queue: Arc<ArrayQueue<ThreadCommand<Vec<Vec<u8>>>>>,
 
     acc2tax.reserve(1_000); */
 
-    loop {
-        let backoff = Backoff::new();
+    let backoff = Backoff::new();
 
-        while queue.is_empty() {
-            backoff.spin();
-        }
+    loop {
 
         if let Ok(command) = queue.pop() {
 
@@ -200,12 +233,14 @@ fn _worker_thread(queue: Arc<ArrayQueue<ThreadCommand<Vec<Vec<u8>>>>>,
             
             results.push(result);
             jobs.fetch_sub(1);
+        } else {
+            backoff.snooze();
         }
     }
 }
 
 fn _merger_thread(// results: Arc<SegQueue<Acc2Tax>>, 
-                    results: Arc<SegQueue<Vec<Result>>>, 
+                    results: Arc<ArrayQueue<Vec<Result>>>, 
                     jobs: Arc<AtomicCell<usize>>) -> Acc2Tax {
 
     let mut acc2tax: Acc2Tax = Default::default();
@@ -215,18 +250,16 @@ fn _merger_thread(// results: Arc<SegQueue<Acc2Tax>>,
     loop {
         let backoff = Backoff::new();
 
-        while results.is_empty() && jobs.load() > 0 {
-            backoff.snooze();
-        }
-
-        if results.is_empty() && jobs.load() == 0 {
-            return acc2tax;
-        }
-
         if let Ok(a2t) = results.pop() {
             // into_map(&mut acc2tax, a2t);
             for x in a2t {
                 into_map(&mut acc2tax, x);
+            }
+        } else {
+            if results.is_empty() && jobs.load() == 0 {
+                return acc2tax;
+            } else {
+                backoff.snooze();
             }
         }
     }

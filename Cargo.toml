@@ -21,10 +21,16 @@ once_cell = "1.2.0"
 bytelines = "2.2.2"
 mimalloc = { version = "*", default-features = false }
 snap = "0.2.5"
+rayon = "1.2.0"
+indicatif = "0.12.0"
+thincollections = "0.5.3"
 
 [dependencies.pyo3]
-version = "0.8.0"
+version = "0.8.1"
 features = ["extension-module"]
+
+[profile.dev]
+opt-level = 3
 
 [profile.release]
 opt-level = 3
