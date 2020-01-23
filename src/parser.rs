@@ -1,7 +1,7 @@
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
 use super::*;
-use thincollections::thin_vec::ThinVec;
+// use thincollections::thin_vec::ThinVec;
 
 enum ThreadCommand<T> {
     Work(T),
@@ -73,7 +73,7 @@ pub fn read_taxonomy(num_threads: usize, acc2tax_filename: String, nodes_filenam
                             Err(y) => panic!("{}", y)
                         };
 
-    let gb2accession_fh = File::open(acc2tax_filename.clone()).unwrap();
+    let gb2accession_fh = File::open(acc2tax_filename).unwrap();
 
     let pb = ProgressBar::new(gb2accession_fh.metadata().unwrap().len());
     pb.set_style(ProgressStyle::default_bar()
@@ -183,7 +183,7 @@ pub fn read_taxonomy(num_threads: usize, acc2tax_filename: String, nodes_filenam
 
     let mut acc2tax = merger_child.join().expect("Unable to join merger thread");
     acc2tax.shrink_to_fit();
-    for (k,v) in acc2tax.iter_mut() {
+    for (_k,v) in acc2tax.iter_mut() {
         v.shrink_to_fit();
     }
 
@@ -231,7 +231,7 @@ fn _worker_thread(queue: Arc<ArrayQueue<ThreadCommand<Vec<Vec<u8>>>>>,
 
             result.shrink_to_fit(); */
             
-            results.push(result);
+            results.push(result).expect("Unable to push onto results in parser");
             jobs.fetch_sub(1);
         } else {
             backoff.snooze();
@@ -255,18 +255,15 @@ fn _merger_thread(// results: Arc<SegQueue<Acc2Tax>>,
             for x in a2t {
                 into_map(&mut acc2tax, x);
             }
+        } else if results.is_empty() && jobs.load() == 0 {
+            return acc2tax;
         } else {
-            if results.is_empty() && jobs.load() == 0 {
-                return acc2tax;
-            } else {
-                backoff.snooze();
-            }
+            backoff.snooze();
         }
     }
 }
 
 pub fn parse_names(filename: String) -> Vec<String> {
-    let filename = filename.to_string();
     let mut names: Vec<String> = Vec::with_capacity(3_006_098);
 
     let reader = BufReader::new(File::open(filename).expect("Unable to open taxonomy names file"));
@@ -296,7 +293,6 @@ pub fn parse_names(filename: String) -> Vec<String> {
 }
 
 pub fn parse_nodes(filename: String) -> (Vec<usize>, Vec<String>) {
-    let filename = filename.to_string();
     let mut taxon_to_parent: Vec<usize> = Vec::with_capacity(3_000_000);
     let mut taxon_rank: Vec<String> = Vec::with_capacity(3_000_000);
 

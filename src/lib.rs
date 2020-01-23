@@ -21,7 +21,6 @@ use std::hash::BuildHasherDefault;
 use std::collections::HashMap;
 use std::thread::Builder;
 use std::path::Path;
-use std::collections::HashSet;
 
 use once_cell::sync::OnceCell;
 
@@ -34,15 +33,12 @@ use pyo3::wrap_pyfunction;
 
 use crossbeam::utils::Backoff;
 use crossbeam::atomic::AtomicCell;
-use crossbeam::queue::{ArrayQueue, PushError, SegQueue};
+use crossbeam::queue::{ArrayQueue, PushError};
 
 use bytelines::*;
 use rayon::prelude::*;
 
 use thincollections::thin_vec::ThinVec;
-
-use indicatif::ProgressBar;
-use indicatif::ProgressStyle;
 
 pub type Acc2TaxInner = HashMap<Vec<u8>, u32, BuildHasherDefault<XxHash>>;
 pub type Acc2Tax = HashMap<u32, Acc2TaxInner, BuildHasherDefault<XxHash>>;
@@ -57,10 +53,10 @@ static TAXON_RANK: OnceCell<Vec<String>>  = OnceCell::new();
 fn load_taxon(filename: &str) -> Option<Acc2TaxInner> {
     let file = match File::open(filename) {
         Ok(file) => file,
-        Err(x)   => return None
+        Err(_x)   => return None
     };
 
-    let fh = BufReader::with_capacity(64 * 1024 * 1024, File::open(filename).expect("Unable to taxonfile"));
+    let fh = BufReader::with_capacity(64 * 1024 * 1024, file);
     Some(bincode::deserialize_from(snap::Reader::new(fh)).expect("Unable to read file..."))
 
 }
@@ -81,15 +77,17 @@ pub fn get_taxon(accession: String) -> u32 {
 
     // println!("Loaded taxon map... {}", &short.to_string());
 
-    let tax_id = match map.get(&accession) {
+    // let tax_id = 
+    match map.get(&accession) {
         Some(x) => *x,
         None    => { println!("Unable to find entry! {}", String::from_utf8(accession).unwrap()); 
                     0 }
-    };
+    }
+    //};
 
     // println!("Returning taxid: {}", tax_id);
 
-    tax_id
+    // tax_id
 
 //    *map.get(&accession).unwrap()
     
@@ -118,7 +116,7 @@ pub fn get_complete_taxonomy (taxon: usize) -> Vec<usize> {
 
     complete_taxon.push(cur_taxon);
 
-    while cur_taxon != 1 {
+    while cur_taxon != 1 && cur_taxon != 0 {
         cur_taxon = *taxon_to_parent.get(cur_taxon).or(Some(&1)).unwrap();
         complete_taxon.push(cur_taxon);
     }
@@ -137,7 +135,7 @@ pub fn get_complete_taxonomy_dict (taxon: usize) -> HashMap<String, usize> {
 
     complete_taxon.insert(taxon_rank[cur_taxon].clone(), cur_taxon);
 
-    while cur_taxon != 1 {
+    while cur_taxon != 1 && cur_taxon != 0 {
         cur_taxon = *taxon_to_parent.get(cur_taxon).or(Some(&1)).unwrap();
         complete_taxon.insert(taxon_rank[cur_taxon].clone(), cur_taxon);
     }
@@ -160,14 +158,13 @@ pub fn get_complete_taxonomy_names_dict (taxon: usize) -> HashMap<String, String
     let mut loops: usize = 0;
 
     while cur_taxon != 1 && cur_taxon != 0 {
-        loops = loops + 1;
+        loops += 1;
         if loops > 100 {
             println!("Stuck in some sort of a loop... {} {}", cur_taxon, *taxon_to_parent.get(cur_taxon).unwrap());
         }
         cur_taxon = *taxon_to_parent.get(cur_taxon).or(Some(&1)).unwrap();
         complete_taxon.insert(taxon_rank[cur_taxon].clone(), names[cur_taxon].clone());
     }
-
     complete_taxon.shrink_to_fit();
     complete_taxon
 }
@@ -182,14 +179,14 @@ pub fn init(
 // Initializes the database
 
     let (data, names, taxon_to_parent, taxon_rank);
-    let mut new = false;
-    let mut acc2tax: Acc2Tax = Default::default();
+    // let mut new = false;
+    let acc2tax: Acc2Tax; // = Default::default();
 
 
     if Path::new("taxon_rank.bc").exists() {
         data = load_existing();
     } else {
-        new = true;
+        // new = true;
         println!("Binary files do not exist, generating... This can take up to 60 minutes the first time...");
         println!("Processing acc2tax file");
         data = parser::read_taxonomy(num_threads, acc2tax_filename, nodes_filename, names_filename);
