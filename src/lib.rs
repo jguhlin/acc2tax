@@ -54,9 +54,15 @@ static NAMES: OnceCell<Vec<String>>       = OnceCell::new();
 static TAXON2PARENT: OnceCell<Vec<usize>> = OnceCell::new();
 static TAXON_RANK: OnceCell<Vec<String>>  = OnceCell::new();
 
-fn load_taxon(filename: &str) -> Acc2TaxInner {
+fn load_taxon(filename: &str) -> Option<Acc2TaxInner> {
+    let file = match File::open(filename) {
+        Ok(file) => file,
+        Err(x)   => return None
+    };
+
     let fh = BufReader::with_capacity(64 * 1024 * 1024, File::open(filename).expect("Unable to taxonfile"));
-    bincode::deserialize_from(snap::Reader::new(fh)).expect("Unable to read file...")
+    Some(bincode::deserialize_from(snap::Reader::new(fh)).expect("Unable to read file..."))
+
 }
 
 #[pyfunction]
@@ -68,7 +74,10 @@ pub fn get_taxon(accession: String) -> u32 {
 
     // println!("Loading taxon map... {}", &short.to_string());
     
-    let map = load_taxon(&format!("acc2tax_db/{}.bc", &short.to_string()));
+    let map = match load_taxon(&format!("acc2tax_db/{}.bc", &short.to_string())) {
+        Some(x) => x,
+        None    => return 0
+    };
 
     // println!("Loaded taxon map... {}", &short.to_string());
 
