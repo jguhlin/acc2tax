@@ -55,19 +55,34 @@ static TAXON2PARENT: OnceCell<Vec<usize>> = OnceCell::new();
 static TAXON_RANK: OnceCell<Vec<String>>  = OnceCell::new();
 
 fn load_taxon(filename: &str) -> Acc2TaxInner {
-    let fh = BufReader::with_capacity(64 * 1024 * 1024, File::open(filename).unwrap());
+    let fh = BufReader::with_capacity(64 * 1024 * 1024, File::open(filename).expect("Unable to taxonfile"));
     bincode::deserialize_from(snap::Reader::new(fh)).expect("Unable to read file...")
 }
 
 #[pyfunction]
 pub fn get_taxon(accession: String) -> u32 {
 
-    let accession = accession.as_bytes().to_vec();
+    let accession = accession.split_ascii_whitespace().take(1).collect::<String>().as_bytes().to_vec();
+
     let short: u32 = parser::shorten(&accession[0..4]);
+
+    // println!("Loading taxon map... {}", &short.to_string());
     
     let map = load_taxon(&format!("acc2tax_db/{}.bc", &short.to_string()));
 
-    *map.get(&accession).unwrap()
+    // println!("Loaded taxon map... {}", &short.to_string());
+
+    let tax_id = match map.get(&accession) {
+        Some(x) => *x,
+        None    => { println!("Unable to find entry! {}", String::from_utf8(accession).unwrap()); 
+                    0 }
+    };
+
+    // println!("Returning taxid: {}", tax_id);
+
+    tax_id
+
+//    *map.get(&accession).unwrap()
     
 }
 
@@ -104,7 +119,57 @@ pub fn get_complete_taxonomy (taxon: usize) -> Vec<usize> {
 }
 
 #[pyfunction]
-pub fn init(num_threads: usize, acc2tax_filename: String, nodes_filename: String, names_filename: String) {
+pub fn get_complete_taxonomy_dict (taxon: usize) -> HashMap<String, usize> {
+    let mut complete_taxon: HashMap<String, usize> = HashMap::with_capacity(20);
+    
+    let mut cur_taxon = taxon;
+    let taxon_to_parent = TAXON2PARENT.get().expect("Data not initialized");
+    let taxon_rank = TAXON_RANK.get().expect("Taxon Rank not initialized");
+
+    complete_taxon.insert(taxon_rank[cur_taxon].clone(), cur_taxon);
+
+    while cur_taxon != 1 {
+        cur_taxon = *taxon_to_parent.get(cur_taxon).or(Some(&1)).unwrap();
+        complete_taxon.insert(taxon_rank[cur_taxon].clone(), cur_taxon);
+    }
+
+    complete_taxon.shrink_to_fit();
+    complete_taxon
+}
+
+#[pyfunction]
+pub fn get_complete_taxonomy_names_dict (taxon: usize) -> HashMap<String, String> {
+    let mut complete_taxon: HashMap<String, String> = HashMap::with_capacity(20);
+    
+    let mut cur_taxon = taxon;
+    let taxon_to_parent = TAXON2PARENT.get().expect("Data not initialized");
+    let taxon_rank = TAXON_RANK.get().expect("Taxon Rank not initialized");
+    let names = NAMES.get().expect("Names not initialized");
+
+    complete_taxon.insert(taxon_rank[cur_taxon].clone(), names[cur_taxon].clone());
+
+    let mut loops: usize = 0;
+
+    while cur_taxon != 1 && cur_taxon != 0 {
+        loops = loops + 1;
+        if loops > 100 {
+            println!("Stuck in some sort of a loop... {} {}", cur_taxon, *taxon_to_parent.get(cur_taxon).unwrap());
+        }
+        cur_taxon = *taxon_to_parent.get(cur_taxon).or(Some(&1)).unwrap();
+        complete_taxon.insert(taxon_rank[cur_taxon].clone(), names[cur_taxon].clone());
+    }
+
+    complete_taxon.shrink_to_fit();
+    complete_taxon
+}
+
+
+#[pyfunction]
+pub fn init(
+    num_threads: usize, 
+    acc2tax_filename: String, 
+    nodes_filename: String, 
+    names_filename: String) {
 // Initializes the database
 
     let (data, names, taxon_to_parent, taxon_rank);
@@ -112,20 +177,22 @@ pub fn init(num_threads: usize, acc2tax_filename: String, nodes_filename: String
     let mut acc2tax: Acc2Tax = Default::default();
 
 
-    if Path::new("taxon_level_to_acc.bc").exists() {
+    if Path::new("taxon_rank.bc").exists() {
         data = load_existing();
     } else {
         new = true;
         println!("Binary files do not exist, generating... This can take up to 60 minutes the first time...");
+        println!("Processing acc2tax file");
         data = parser::read_taxonomy(num_threads, acc2tax_filename, nodes_filename, names_filename);
 
         acc2tax = data.0.unwrap();
 
-        // TODO: This part should be serialized, actually...
         acc2tax.par_iter().for_each(|(short, all)| {
             let mut acc2tax_fh = snap::Writer::new(File::create(format!("acc2tax_db/{}.bc", short.to_string())).unwrap());
             bincode::serialize_into(&mut acc2tax_fh, &all).expect("Unable to write to bincode file");
         });
+
+        println!("Processing names file");
 
         // let mut acc2tax_fh = snap::Writer::new(File::create("acc2tax.bc").unwrap());
         // bincode::serialize_into(&mut acc2tax_fh, &data.0).expect("Unable to write to bincode file");
@@ -134,12 +201,13 @@ pub fn init(num_threads: usize, acc2tax_filename: String, nodes_filename: String
         let mut names_fh = snap::Writer::new(File::create("names.bc").unwrap());
         bincode::serialize_into(&mut names_fh, &data.1).expect("Unable to write to bincode file");
 
+        println!("Processing taxon to parent file");
         let mut taxon_to_parent_fh = snap::Writer::new(File::create("t2p.bc").unwrap());
         bincode::serialize_into(&mut taxon_to_parent_fh, &data.2).expect("Unable to write to bincode file");
 
+        println!("Processing taxon rank file");
         let mut taxon_rank_fh = snap::Writer::new(File::create("taxon_rank.bc").unwrap());
         bincode::serialize_into(&mut taxon_rank_fh, &data.3).expect("Unable to write to bincode file");
-
     }
 
     names = data.1;
@@ -150,6 +218,7 @@ pub fn init(num_threads: usize, acc2tax_filename: String, nodes_filename: String
     TAXON2PARENT.set(taxon_to_parent).expect("Unable to set. Already initialized?");
     TAXON_RANK.set(taxon_rank).expect("Unable to set. Already initialized?");
 
+    /*
     if new {
         let mut taxon_level_to_acc: TaxonLevels2Acc = Default::default();
         taxon_level_to_acc.reserve(100_000);
@@ -241,7 +310,7 @@ pub fn init(num_threads: usize, acc2tax_filename: String, nodes_filename: String
 
         // let mut taxon_level_to_acc_fh = snap::Writer::new(File::create("taxon_level_to_acc.bc").unwrap());
         // bincode::serialize_into(&mut taxon_level_to_acc_fh, &taxon_level_to_acc).expect("Unable to write to bincode file");
-    }
+    } */
 
     println!("Loaded taxonomy databases");
 }
@@ -251,6 +320,8 @@ fn acc2tax(py: Python, m: &PyModule) -> PyResult<()> {
     m.add_wrapped(wrap_pyfunction!(init))?;
     m.add_wrapped(wrap_pyfunction!(get_taxon))?;
     m.add_wrapped(wrap_pyfunction!(get_complete_taxonomy))?;
+    m.add_wrapped(wrap_pyfunction!(get_complete_taxonomy_dict))?;
+    m.add_wrapped(wrap_pyfunction!(get_complete_taxonomy_names_dict))?;
     // Need a function to get the rank of a taxon
     // Need a function to get the parents
     // Need a function to get the parents & ranks given a taxon (or accession)

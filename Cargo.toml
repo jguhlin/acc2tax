@@ -8,7 +8,7 @@ edition = "2018"
 
 [lib]
 name = "acc2tax"
-crate-type = ["cdylib", "lib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 flate2 = "1.0.11"
@@ -26,12 +26,13 @@ indicatif = "0.12.0"
 thincollections = "0.5.3"
 
 [dependencies.pyo3]
-version = "0.8.1"
+version = "0.9.0-alpha.1"
 features = ["extension-module"]
 
 [profile.dev]
-opt-level = 3
+# opt-level = 3
 
 [profile.release]
 opt-level = 3
+lto = true
 # debug = true # Uncomment when needing valgrind
