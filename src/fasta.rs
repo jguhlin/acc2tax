@@ -119,6 +119,7 @@ pub fn filter_fasta_file(filename: String, tax_id: usize, num_threads: usize) {
     let backoff = Backoff::new();
 
     while !*generator_done.read().unwrap() {
+        thread::park();
         backoff.snooze();
     }
 
