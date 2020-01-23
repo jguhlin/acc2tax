@@ -5,6 +5,9 @@ extern crate mimalloc;
 extern crate serde;
 extern crate bytelines;
 extern crate snap;
+#[macro_use] extern crate cached;
+
+use cached::SizedCache;
 
 use mimalloc::MiMalloc;
 
@@ -108,22 +111,29 @@ fn load_existing() -> (Option<Acc2Tax>, Vec<String>, Vec<usize>, Vec<String>) {
 
 }
 
+cached!{
+    GETCOMPLETETAXONOMY: SizedCache<usize, Vec<usize>> = SizedCache::with_size(1024 * 1024 * 8);
+    fn _get_complete_taxonomy(taxon: usize) -> Vec<usize> = {
+        let mut complete_taxon: Vec<usize> = Vec::with_capacity(20);
+    
+        let mut cur_taxon = taxon;
+        let taxon_to_parent = TAXON2PARENT.get().expect("Data not initialized");
+    
+        complete_taxon.push(cur_taxon);
+    
+        while cur_taxon != 1 && cur_taxon != 0 {
+            cur_taxon = *taxon_to_parent.get(cur_taxon).or(Some(&1)).unwrap();
+            complete_taxon.push(cur_taxon);
+        }
+    
+        complete_taxon.shrink_to_fit();
+        complete_taxon
+    }
+}
+
 #[pyfunction]
 pub fn get_complete_taxonomy (taxon: usize) -> Vec<usize> {
-    let mut complete_taxon: Vec<usize> = Vec::with_capacity(20);
-    
-    let mut cur_taxon = taxon;
-    let taxon_to_parent = TAXON2PARENT.get().expect("Data not initialized");
-
-    complete_taxon.push(cur_taxon);
-
-    while cur_taxon != 1 && cur_taxon != 0 {
-        cur_taxon = *taxon_to_parent.get(cur_taxon).or(Some(&1)).unwrap();
-        complete_taxon.push(cur_taxon);
-    }
-
-    complete_taxon.shrink_to_fit();
-    complete_taxon
+    _get_complete_taxonomy(taxon)  
 }
 
 #[pyfunction]

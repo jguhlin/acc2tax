@@ -47,7 +47,7 @@ const STACKSIZE: usize = 64 * 1024 * 1024;  // Stack size (needs to be > BUFSIZE
 // And unpark it from the generator...
 #[pyfunction]
 pub fn filter_fasta_file(filename: String, tax_id: usize, num_threads: usize) {
-    let seq_queue = Arc::new(ArrayQueue::<ThreadCommand<Sequence>>::new(4096));
+    let seq_queue = Arc::new(ArrayQueue::<ThreadCommand<Sequence>>::new(4096 * 8));
     let output_queue = Arc::new(ArrayQueue::<ThreadCommand<Sequence>>::new(1024));
 
     let generator_done = Arc::new(RwLock::new(false));
@@ -60,6 +60,7 @@ pub fn filter_fasta_file(filename: String, tax_id: usize, num_threads: usize) {
     { // Explicit lifetime
         let generator_done = Arc::clone(&generator_done);
         let seq_queue = Arc::clone(&seq_queue);
+        let output_queue = Arc::clone(&output_queue);
         let num_threads = num_threads.clone();
 
         generator =  match Builder::new()
@@ -69,6 +70,7 @@ pub fn filter_fasta_file(filename: String, tax_id: usize, num_threads: usize) {
                                 sequence_generator(
                                     filename, 
                                     seq_queue, 
+                                    output_queue,
                                     generator_done, 
                                     num_threads,
                                     main_thread_handle,
@@ -200,6 +202,7 @@ fn filter_sequence_child_worker(
 fn sequence_generator(
         filename: String, 
         seq_queue: Arc<ArrayQueue<ThreadCommand<Sequence>>>, 
+        output_queue: Arc<ArrayQueue<ThreadCommand<Sequence>>>, 
         generator_done: Arc<RwLock<bool>>,
         num_threads: usize,
         main_thread_handle: Thread,) 
@@ -220,7 +223,7 @@ fn sequence_generator(
     let mut seqbuffer: Vec<u8> = Vec::with_capacity(8 * 1024 * 1024); // 8 Mb to start, will likely increase...
     let mut seqlen: usize = 0;
 
-    let file = BufReader::with_capacity(64 * 1024 * 1024, pb.wrap_read(file));
+    let file = BufReader::with_capacity(32 * 1024 * 1024, pb.wrap_read(file));
 
     let fasta: Box<dyn Read> = if filename.ends_with("gz") {
         Box::new(flate2::read::GzDecoder::new(file))
@@ -228,7 +231,7 @@ fn sequence_generator(
         Box::new(file)
     };
 
-    let mut reader = BufReader::with_capacity(128 * 1024 * 1024, fasta);
+    let mut reader = BufReader::with_capacity(16 * 1024 * 1024, fasta);
 
     let backoff = Backoff::new();
 
@@ -239,7 +242,6 @@ fn sequence_generator(
             // Submit the last sequence (or in the case of some genomes, the entire sequence)
             let wp = ThreadCommand::Work(Sequence { seq: seqbuffer[..seqlen].to_vec(), id: id });
             seqbuffer.clear();
-
 
             let mut result = seq_queue.push(wp);
             while let Err(PushError(wp)) = result {
@@ -268,6 +270,7 @@ fn sequence_generator(
 
                 let slice_end = bytes_read.saturating_sub(1);
                 id = String::from_utf8(buffer[1..slice_end].to_vec()).expect("Invalid UTF-8 encoding...");
+                pb.set_message(&format!("Seq Queue: {} Output: {}", seq_queue.len(), output_queue.len()));
             },
             _  => {
                 let slice_end = bytes_read.saturating_sub(1);

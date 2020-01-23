@@ -11,7 +11,7 @@ name = "acc2tax"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-flate2 = "1.0.13"
+flate2 = { version = "1.0.13", features = ["zlib"], default-features = false }
 serde = { version = "1.0.104", features = ["derive"] }
 bincode = "1.2.1"
 twox-hash = "1.5.0"
@@ -24,6 +24,7 @@ snap = "0.2.5"
 rayon = "1.3.0"
 indicatif = "0.13.0"
 thincollections = "0.5.3"
+cached = "0.11.0"
 
 [dependencies.pyo3]
 version = "0.9.0-alpha.1"
