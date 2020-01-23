@@ -18,10 +18,16 @@ impl ThreadCommand<Vec<Vec<u8>>> {
     }
 }
 
-pub fn shorten(acc: &[u8]) -> u32 {
-    let mut array = [0; 4];
-    array.copy_from_slice(&acc[0..4]);
-    unsafe { std::mem::transmute::<[u8; 4], u32>(array) }
+pub fn shorten(acc: &str) -> String {
+    let length = acc.len();
+    let short_length = 6;
+    let max = if length < short_length {
+                    length
+                } else {
+                    short_length
+                };
+        
+    acc[..max].to_string()
 }
 
 fn parse_line(line: &[u8]) -> Result {
@@ -29,8 +35,9 @@ fn parse_line(line: &[u8]) -> Result {
         std::str::from_utf8_unchecked(line).split_ascii_whitespace().skip(1).take(2).collect::<Vec<&str>>()
     };
     let taxon = data[1].parse::<u32>().unwrap();
-    let acc: Vec<u8> = data[0].as_bytes().to_vec();
-    let short: u32 = shorten(&acc[0..4]);
+    // let acc: Vec<u8> = data[0].as_bytes().to_vec();
+    let acc: String = data[0].to_string();
+    let short: String = shorten(&acc);
 
     (short, acc, taxon)
 }
@@ -44,7 +51,7 @@ fn into_map(
     let secondary = match acc2tax.get_mut(&short) {
         Some(x) => x,
         None    => {
-                    let mut new_hash: HashMap<Vec<u8>, u32, BuildHasherDefault<XxHash>> = 
+                    let mut new_hash: HashMap<String, u32, BuildHasherDefault<XxHash>> = 
                         Default::default();
                     new_hash.reserve(100);
                     acc2tax.insert(short.clone(), new_hash);
@@ -333,7 +340,7 @@ mod tests {
         let line: Vec<u8> = "X59856  X59856.2        9913    109659794".as_bytes().to_vec();
         assert_eq!(
             parse_line(&line), 
-            (943273304_u32, "X59856.2".as_bytes().to_vec(), 9913));
+            ("X59856".to_string(), "X59856.2".to_string(), 9913));
     }
 
 }

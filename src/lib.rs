@@ -12,6 +12,7 @@ use mimalloc::MiMalloc;
 static GLOBAL: MiMalloc = MiMalloc;
 
 mod parser;
+mod fasta;
 
 use std::str;
 use std::sync::Arc;
@@ -40,11 +41,11 @@ use rayon::prelude::*;
 
 use thincollections::thin_vec::ThinVec;
 
-pub type Acc2TaxInner = HashMap<Vec<u8>, u32, BuildHasherDefault<XxHash>>;
-pub type Acc2Tax = HashMap<u32, Acc2TaxInner, BuildHasherDefault<XxHash>>;
+pub type Acc2TaxInner = HashMap<String, u32, BuildHasherDefault<XxHash>>;
+pub type Acc2Tax = HashMap<String, Acc2TaxInner, BuildHasherDefault<XxHash>>;
 pub type TaxonLevels2AccInner = HashMap<u32, Vec<ThinVec<u8>>, BuildHasherDefault<XxHash>>;
 pub type TaxonLevels2Acc = HashMap<u32, TaxonLevels2AccInner, BuildHasherDefault<XxHash>>;
-pub type Result = (u32, Vec<u8>, u32);
+pub type Result = (String, String, u32);
 
 static NAMES: OnceCell<Vec<String>>       = OnceCell::new();
 static TAXON2PARENT: OnceCell<Vec<usize>> = OnceCell::new();
@@ -64,9 +65,9 @@ fn load_taxon(filename: &str) -> Option<Acc2TaxInner> {
 #[pyfunction]
 pub fn get_taxon(accession: String) -> u32 {
 
-    let accession = accession.split_ascii_whitespace().take(1).collect::<String>().as_bytes().to_vec();
+    let accession = accession.split_ascii_whitespace().take(1).collect::<String>();
 
-    let short: u32 = parser::shorten(&accession[0..4]);
+    let short: String = parser::shorten(&accession);
 
     // println!("Loading taxon map... {}", &short.to_string());
     
@@ -80,7 +81,7 @@ pub fn get_taxon(accession: String) -> u32 {
     // let tax_id = 
     match map.get(&accession) {
         Some(x) => *x,
-        None    => { println!("Unable to find entry! {}", String::from_utf8(accession).unwrap()); 
+        None    => { // println!("Unable to find entry! {}", accession.clone()); 
                     0 }
     }
     //};
@@ -322,14 +323,21 @@ pub fn init(
 }
 
 #[pymodule]
-fn acc2tax(py: Python, m: &PyModule) -> PyResult<()> {
+fn acc2tax(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_wrapped(wrap_pyfunction!(init))?;
     m.add_wrapped(wrap_pyfunction!(get_taxon))?;
     m.add_wrapped(wrap_pyfunction!(get_complete_taxonomy))?;
     m.add_wrapped(wrap_pyfunction!(get_complete_taxonomy_dict))?;
     m.add_wrapped(wrap_pyfunction!(get_complete_taxonomy_names_dict))?;
+    m.add_wrapped(wrap_pyfunction!(filter_fasta_file))?;
     // Need a function to get the rank of a taxon
     // Need a function to get the parents
     // Need a function to get the parents & ranks given a taxon (or accession)
     Ok(())
+}
+
+
+#[pyfunction]
+fn filter_fasta_file(filename: String, tax_id: usize, num_threads: usize) {
+    fasta::filter_fasta_file(filename, tax_id, num_threads);
 }
