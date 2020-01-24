@@ -176,7 +176,7 @@ fn filter_sequence_child_worker(
         output_queue: Arc<ArrayQueue<ThreadCommand<Sequence>>>,)
 {
     let mut contains_cache: HashMap<u32, bool> = HashMap::with_capacity(1024 * 1024);
-    let mut taxon_cache: HashMap<String, Option<super::Acc2TaxInner>> = HashMap::with_capacity(1024 * 1024);
+    let mut taxon_cache: HashMap<String, Option<super::Acc2TaxInner>> = HashMap::with_capacity(1024 * 256);
     let backoff = Backoff::new();
     
     loop {
@@ -229,7 +229,7 @@ fn filter_sequence_child_worker(
                 contains_cache.clear();
             }
 
-            if taxon_cache.len() > 1024 * 960 {
+            if taxon_cache.len() > 1024 * 232 {
                 taxon_cache.clear();
             }
 
