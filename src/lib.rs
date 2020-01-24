@@ -54,14 +54,43 @@ static NAMES: OnceCell<Vec<String>>       = OnceCell::new();
 static TAXON2PARENT: OnceCell<Vec<usize>> = OnceCell::new();
 static TAXON_RANK: OnceCell<Vec<String>>  = OnceCell::new();
 
+//cached! {
+    // FILESIZE: SizedCache<String, usize> = SizedCache::with_size(1024 * 1024 * 64);
+fn get_filesize(filename: String) -> usize {
+    let file = match File::open(filename) {
+        Ok(file) => file,
+        Err(_x)   => return 0_usize
+    };
+
+    file.metadata().unwrap().len() as usize
+}
+// }
+
+cached!{
+    LOADTAXON: SizedCache<String, Option<Acc2TaxInner>> = SizedCache::with_size(1024 * 256);
+    fn load_taxon_cached(filename: String) -> Option<Acc2TaxInner> = {
+        let file = match File::open(filename) {
+            Ok(file) => file,
+            Err(_x)   => return None
+        };
+
+        let fh = BufReader::with_capacity(1 * 1024 * 1024, file);
+        Some(bincode::deserialize_from(snap::Reader::new(fh)).expect("Unable to read file..."))
+    }
+}
+
 fn load_taxon(filename: &str) -> Option<Acc2TaxInner> {
     let file = match File::open(filename) {
         Ok(file) => file,
         Err(_x)   => return None
     };
 
-    let fh = BufReader::with_capacity(64 * 1024 * 1024, file);
-    Some(bincode::deserialize_from(snap::Reader::new(fh)).expect("Unable to read file..."))
+    if get_filesize(filename.to_string()) > 1024 * 1024 {
+        load_taxon_cached(filename.to_string())
+    } else {
+        let fh = BufReader::with_capacity(256 * 1024, file);
+        Some(bincode::deserialize_from(snap::Reader::new(fh)).expect("Unable to read file..."))
+    }
 
 }
 
