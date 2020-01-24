@@ -192,7 +192,7 @@ fn filter_sequence_child_worker(
             let map = match taxon_cache
                         .entry(short.clone())
                         .or_insert_with(|| 
-                            super::load_taxon(&format!("acc2tax_db/{}.bc", &short.to_string())))
+                            super::load_taxon(&format!("acc2tax_db/{}.bc", short)))
                         {
                             Some(x) => x,
                             None    => continue
@@ -200,10 +200,15 @@ fn filter_sequence_child_worker(
 
             // let tax_id = get_taxon(seq.id.clone());
 
-            let tax_id = match map.get(&seq.id) {
+            // println!("{}", seq.id);
+            let accession = seq.id.split_ascii_whitespace().take(1).collect::<String>();
+
+            let tax_id = match map.get(&accession) {
                 Some(x) => *x,
                 None    => continue
             };
+
+            // println!("\n\n{}\n\n", tax_id);
 
             let contains = 
                 contains_cache.entry(tax_id).or_insert_with(|| 
