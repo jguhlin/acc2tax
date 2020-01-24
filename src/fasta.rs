@@ -45,14 +45,14 @@ pub struct Sequence {
     pub id:     String,
 }
 
-const STACKSIZE: usize = 64 * 1024 * 1024;  // Stack size (needs to be > BUFSIZE + SEQBUFSIZE)
+const STACKSIZE: usize = 16 * 1024 * 1024;  // Stack size (needs to be > BUFSIZE + SEQBUFSIZE)
 
 
 // And unpark it from the generator...
 #[pyfunction]
 pub fn filter_fasta_file(filename: String, tax_id: usize, num_threads: usize) {
-    let seq_queue = Arc::new(ArrayQueue::<ThreadCommand<Sequence>>::new(1024 * 256));
-    let output_queue = Arc::new(ArrayQueue::<ThreadCommand<Sequence>>::new(1024));
+    let seq_queue = Arc::new(ArrayQueue::<ThreadCommand<Sequence>>::new(1024 * 128));
+    let output_queue = Arc::new(ArrayQueue::<ThreadCommand<Sequence>>::new(256));
 
     let generator_done = Arc::new(RwLock::new(false));
 
@@ -175,8 +175,8 @@ fn filter_sequence_child_worker(
         seq_queue: Arc<ArrayQueue<ThreadCommand<Sequence>>>,
         output_queue: Arc<ArrayQueue<ThreadCommand<Sequence>>>,)
 {
-    let mut contains_cache: HashMap<u32, bool> = HashMap::with_capacity(1024 * 1024);
-    let mut taxon_cache: HashMap<String, Option<super::Acc2TaxInner>> = HashMap::with_capacity(1024 * 256);
+    let mut contains_cache: HashMap<u32, bool> = HashMap::with_capacity(1024 * 8);
+    let mut taxon_cache: HashMap<String, Option<super::Acc2TaxInner>> = HashMap::with_capacity(1024 * 8);
     let backoff = Backoff::new();
     
     loop {
@@ -225,12 +225,14 @@ fn filter_sequence_child_worker(
                 }
             }
         
-            if contains_cache.len() > 1024 * 960 {
+            if contains_cache.len() > 1024 * 8 {
                 contains_cache.clear();
+		contains_cache.shrink_to(1024 * 8);
             }
 
-            if taxon_cache.len() > 1024 * 232 {
+            if taxon_cache.len() > 1024 * 8 {
                 taxon_cache.clear();
+		taxon_cache.shrink_to(1024 * 8);
             }
 
         } else {

@@ -1,3 +1,5 @@
+#![feature(shrink_to)]
+
 extern crate flate2;
 extern crate itertools;
 extern crate bincode;
@@ -67,7 +69,7 @@ fn get_filesize(filename: String) -> usize {
 // }
 
 cached!{
-    LOADTAXON: SizedCache<String, Option<Acc2TaxInner>> = SizedCache::with_size(1024 * 256);
+    LOADTAXON: SizedCache<String, Option<Acc2TaxInner>> = SizedCache::with_size(1024 * 32);
     fn load_taxon_cached(filename: String) -> Option<Acc2TaxInner> = {
         let file = match File::open(filename) {
             Ok(file) => file,
@@ -141,7 +143,7 @@ fn load_existing() -> (Option<Acc2Tax>, Vec<String>, Vec<usize>, Vec<String>) {
 }
 
 cached!{
-    GETCOMPLETETAXONOMY: SizedCache<usize, Vec<usize>> = SizedCache::with_size(1024 * 1024 * 8);
+    GETCOMPLETETAXONOMY: SizedCache<usize, Vec<usize>> = SizedCache::with_size(1024 * 1024);
     fn _get_complete_taxonomy(taxon: usize) -> Vec<usize> = {
         let mut complete_taxon: Vec<usize> = Vec::with_capacity(20);
     
