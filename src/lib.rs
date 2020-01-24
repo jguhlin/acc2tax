@@ -85,12 +85,12 @@ fn load_taxon(filename: &str) -> Option<Acc2TaxInner> {
         Err(_x)   => return None
     };
 
-    if get_filesize(filename.to_string()) > 1024 * 1024 {
-        load_taxon_cached(filename.to_string())
-    } else {
+    //if get_filesize(filename.to_string()) > 1024 * 1024 {
+        //load_taxon_cached(filename.to_string())
+    //} else {
         let fh = BufReader::with_capacity(256 * 1024, file);
         Some(bincode::deserialize_from(snap::Reader::new(fh)).expect("Unable to read file..."))
-    }
+    //}
 
 }
 

@@ -9,6 +9,10 @@ use std::sync::{Arc, RwLock};
 use std::fs::File;
 use std::io::{BufReader, Read, BufRead};
 
+use crate::parser;
+
+use std::collections::HashMap;
+
 use crossbeam::queue::{ArrayQueue, PushError};
 use crossbeam::utils::Backoff;
 
@@ -47,7 +51,7 @@ const STACKSIZE: usize = 64 * 1024 * 1024;  // Stack size (needs to be > BUFSIZE
 // And unpark it from the generator...
 #[pyfunction]
 pub fn filter_fasta_file(filename: String, tax_id: usize, num_threads: usize) {
-    let seq_queue = Arc::new(ArrayQueue::<ThreadCommand<Sequence>>::new(4096 * 8));
+    let seq_queue = Arc::new(ArrayQueue::<ThreadCommand<Sequence>>::new(1024 * 256));
     let output_queue = Arc::new(ArrayQueue::<ThreadCommand<Sequence>>::new(1024));
 
     let generator_done = Arc::new(RwLock::new(false));
@@ -171,7 +175,10 @@ fn filter_sequence_child_worker(
         seq_queue: Arc<ArrayQueue<ThreadCommand<Sequence>>>,
         output_queue: Arc<ArrayQueue<ThreadCommand<Sequence>>>,)
 {
+    let mut contains_cache: HashMap<u32, bool> = HashMap::with_capacity(1024 * 1024);
+    let mut taxon_cache: HashMap<String, Option<super::Acc2TaxInner>> = HashMap::with_capacity(1024 * 1024);
     let backoff = Backoff::new();
+    
     loop {
         if let Ok(command) = seq_queue.pop() {
             if let ThreadCommand::Terminate = command {
@@ -180,10 +187,30 @@ fn filter_sequence_child_worker(
 
             let seq = command.unwrap();
 
-            let tax_id = get_taxon(seq.id.clone());
-            let complete = get_complete_taxonomy(tax_id as usize);
+            let short: String = parser::shorten(&seq.id);
 
-            if complete.contains(&filter_tax_id) {
+            let map = match taxon_cache
+                        .entry(short.clone())
+                        .or_insert_with(|| 
+                            super::load_taxon(&format!("acc2tax_db/{}.bc", &short.to_string())))
+                        {
+                            Some(x) => x,
+                            None    => continue
+                        };
+
+            // let tax_id = get_taxon(seq.id.clone());
+
+            let tax_id = match map.get(&seq.id) {
+                Some(x) => *x,
+                None    => continue
+            };
+
+            let contains = 
+                contains_cache.entry(tax_id).or_insert_with(|| 
+                    get_complete_taxonomy(tax_id as usize).contains(&filter_tax_id));
+
+            //if complete.contains(&filter_tax_id) {
+            if *contains {
                 let wp = ThreadCommand::Work(seq);
 
                 let mut result = output_queue.push(wp);
@@ -192,6 +219,15 @@ fn filter_sequence_child_worker(
                     result = output_queue.push(wp);
                 }
             }
+        
+            if contains_cache.len() > 1024 * 960 {
+                contains_cache.clear();
+            }
+
+            if taxon_cache.len() > 1024 * 960 {
+                taxon_cache.clear();
+            }
+
         } else {
             backoff.snooze();
             backoff.reset();
@@ -220,10 +256,10 @@ fn sequence_generator(
 
     let mut buffer: Vec<u8> = Vec::with_capacity(1024);
     let mut id: String = String::from("INVALID_ID_FIRST_ENTRY_YOU_SHOULD_NOT_SEE_THIS");
-    let mut seqbuffer: Vec<u8> = Vec::with_capacity(8 * 1024 * 1024); // 8 Mb to start, will likely increase...
+    let mut seqbuffer: Vec<u8> = Vec::with_capacity(16 * 1024 * 1024); // 8 Mb to start, will likely increase...
     let mut seqlen: usize = 0;
 
-    let file = BufReader::with_capacity(32 * 1024 * 1024, pb.wrap_read(file));
+    let file = BufReader::with_capacity(128 * 1024 * 1024, pb.wrap_read(file));
 
     let fasta: Box<dyn Read> = if filename.ends_with("gz") {
         Box::new(flate2::read::GzDecoder::new(file))
@@ -231,7 +267,7 @@ fn sequence_generator(
         Box::new(file)
     };
 
-    let mut reader = BufReader::with_capacity(16 * 1024 * 1024, fasta);
+    let mut reader = BufReader::with_capacity(64 * 1024 * 1024, fasta);
 
     let backoff = Backoff::new();
 
