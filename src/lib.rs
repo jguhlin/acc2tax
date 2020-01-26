@@ -3,7 +3,7 @@
 extern crate flate2;
 extern crate itertools;
 extern crate bincode;
-extern crate mimalloc;
+// extern crate mimalloc;
 extern crate serde;
 extern crate bytelines;
 extern crate snap;
@@ -11,10 +11,10 @@ extern crate snap;
 
 use cached::SizedCache;
 
-use mimalloc::MiMalloc;
+// use mimalloc::MiMalloc;
 
-#[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
+// #[global_allocator]
+// static GLOBAL: MiMalloc = MiMalloc;
 
 mod parser;
 mod fasta;
