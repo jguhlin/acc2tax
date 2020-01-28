@@ -363,6 +363,37 @@ pub fn init(
     println!("Loaded taxonomy databases");
 }
 
+#[pyfunction]
+fn get_child_taxons(parent_taxon: usize) -> Vec<usize> {
+    let mut child_taxons: Vec<usize> = Vec::with_capacity(1000);
+
+    let taxon_to_parent = TAXON2PARENT.get().expect("Data not initialized!");
+
+    for x in 0..(taxon_to_parent.len()) {
+        if taxon_to_parent[x] == parent_taxon {
+            child_taxons.push(x)
+        }
+    }
+
+    child_taxons.shrink_to_fit();
+    child_taxons
+}
+
+#[pyfunction]
+fn get_child_taxons_names(parent_taxon: usize) -> Vec<(usize, String)> {
+    let child_taxons = get_child_taxons(parent_taxon);
+    let mut child_taxons_names = Vec::with_capacity(child_taxons.len());
+
+    let names = NAMES.get().expect("Names not initialized");
+
+    for child in child_taxons {
+        child_taxons_names.push((child, names.get(child).unwrap().to_string()))
+    }
+
+    child_taxons_names
+}
+
+
 #[pymodule]
 fn acc2tax(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_wrapped(wrap_pyfunction!(init))?;
@@ -371,6 +402,8 @@ fn acc2tax(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_wrapped(wrap_pyfunction!(get_complete_taxonomy_dict))?;
     m.add_wrapped(wrap_pyfunction!(get_complete_taxonomy_names_dict))?;
     m.add_wrapped(wrap_pyfunction!(filter_fasta_file))?;
+    m.add_wrapped(wrap_pyfunction!(get_child_taxons))?;
+    m.add_wrapped(wrap_pyfunction!(get_child_taxons_names))?;
     // Need a function to get the rank of a taxon
     // Need a function to get the parents
     // Need a function to get the parents & ranks given a taxon (or accession)
