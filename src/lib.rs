@@ -393,6 +393,11 @@ fn get_child_taxons_names(parent_taxon: usize) -> Vec<(usize, String)> {
     child_taxons_names
 }
 
+#[pyfunction]
+fn get_taxon_rank(taxon: usize) -> String {
+    let taxon_rank = TAXON_RANK.get().expect("Taxon Rank not initialized");
+    taxon_rank.get(taxon).unwrap().to_string()
+}
 
 #[pymodule]
 fn acc2tax(_py: Python, m: &PyModule) -> PyResult<()> {
@@ -404,7 +409,8 @@ fn acc2tax(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_wrapped(wrap_pyfunction!(filter_fasta_file))?;
     m.add_wrapped(wrap_pyfunction!(get_child_taxons))?;
     m.add_wrapped(wrap_pyfunction!(get_child_taxons_names))?;
-    // Need a function to get the rank of a taxon
+    m.add_wrapped(wrap_pyfunction!(get_taxon_rank))?;
+    
     // Need a function to get the parents
     // Need a function to get the parents & ranks given a taxon (or accession)
     Ok(())
