@@ -7,6 +7,8 @@ extern crate bincode;
 extern crate serde;
 extern crate bytelines;
 extern crate snap;
+extern crate rand;
+
 #[macro_use] extern crate cached;
 
 use cached::SizedCache;
@@ -418,6 +420,11 @@ fn acc2tax(_py: Python, m: &PyModule) -> PyResult<()> {
 
 
 #[pyfunction]
-fn filter_fasta_file(filename: String, tax_id: usize, num_threads: usize) {
-    fasta::filter_fasta_file(filename, tax_id, num_threads);
+fn filter_fasta_file(filename: String, 
+                    tax_id: usize, 
+                    num_threads: usize,
+                    validation: f32,
+                    test: f32,
+                    other: f32,) {
+    fasta::filter_fasta_file(filename, tax_id, num_threads, validation, test, other);
 }

@@ -18,6 +18,8 @@ use crossbeam::utils::Backoff;
 
 use pyo3::prelude::*;
 
+use rand::Rng;
+
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
 
@@ -47,10 +49,16 @@ pub struct Sequence {
 
 const STACKSIZE: usize = 16 * 1024 * 1024;  // Stack size (needs to be > BUFSIZE + SEQBUFSIZE)
 
-
 // And unpark it from the generator...
 #[pyfunction]
-pub fn filter_fasta_file(filename: String, tax_id: usize, num_threads: usize) {
+pub fn filter_fasta_file(
+    filename: String, 
+    tax_id: usize, 
+    num_threads: usize, 
+    validation: f32, // Fraction to put in the validation file
+    test: f32, // Fraction to put in the test file
+    other: f32) // Chance for a non-matching sequence to end up in one of the files...
+{
     let seq_queue = Arc::new(ArrayQueue::<ThreadCommand<Sequence>>::new(1024 * 128));
     let output_queue = Arc::new(ArrayQueue::<ThreadCommand<Sequence>>::new(256));
 
@@ -95,7 +103,7 @@ pub fn filter_fasta_file(filename: String, tax_id: usize, num_threads: usize) {
         let child = match Builder::new()
                         .name("SequenceFilterWorker".into())
                         .stack_size(STACKSIZE)
-                        .spawn(move || filter_sequence_child_worker(tax_id, seq_queue, output_queue)) {
+                        .spawn(move || filter_sequence_worker(tax_id, seq_queue, output_queue, other)) {
                             Ok(x)  => x,
                             Err(y) => panic!("{}", y)
                         };
@@ -112,7 +120,7 @@ pub fn filter_fasta_file(filename: String, tax_id: usize, num_threads: usize) {
         let outputchild = match Builder::new()
                             .name("OutputWorker".to_string())
                             .stack_size(STACKSIZE)
-                            .spawn(move|| process_output(filename, output_queue)) {
+                            .spawn(move|| process_output(filename, output_queue, validation, test)) {
                                 Ok(x) => x,
                                 Err(y) => panic!("{}", y)
                             };
@@ -145,12 +153,27 @@ pub fn filter_fasta_file(filename: String, tax_id: usize, num_threads: usize) {
 
 }
 
-fn process_output(filename: String, output_queue: Arc<ArrayQueue<ThreadCommand<Sequence>>>) {
+fn process_output(
+    filename: String, 
+    output_queue: Arc<ArrayQueue<ThreadCommand<Sequence>>>,
+    validation: f32,
+    test: f32,
+) {
     let backoff = Backoff::new();
 
-    let f = File::create(format!("{}.snappy", filename)).expect("Unable to write to file");
-    let out_buffer = BufWriter::with_capacity(32 * 1024 * 1024, f);
-    let mut out = snap::Writer::new(out_buffer);
+    let f_train = File::create(format!("{}.train.snappy", filename)).expect("Unable to write to file");
+    let out_train_buffer = BufWriter::with_capacity(32 * 1024 * 1024, f_train);
+    let mut out_train = snap::Writer::new(out_train_buffer);
+
+    let f_validation = File::create(format!("{}.validation.snappy", filename)).expect("Unable to write to file");
+    let out_validation_buffer = BufWriter::with_capacity(32 * 1024 * 1024, f_validation);
+    let mut out_validation = snap::Writer::new(out_validation_buffer);
+
+    let f_test = File::create(format!("{}.test.snappy", filename)).expect("Unable to write to file");
+    let out_test_buffer = BufWriter::with_capacity(32 * 1024 * 1024, f_test);
+    let mut out_test = snap::Writer::new(out_test_buffer);
+
+    let mut rng = rand::thread_rng();
 
     loop {
         if let Ok(command) = output_queue.pop() {
@@ -160,9 +183,19 @@ fn process_output(filename: String, output_queue: Arc<ArrayQueue<ThreadCommand<S
 
             let seq = command.unwrap();
 
-            out.write_all(format!(">{}\n", &seq.id).as_bytes()).expect("Unable to write to file!");
-            out.write_all(&seq.seq).expect("Unable to write to file!");
-            out.write(b"\n").expect("Unable to write to file!");
+            if rng.gen::<f32>() < validation {
+                out_validation.write_all(format!(">{}\n", &seq.id).as_bytes()).expect("Unable to write to file!");
+                out_validation.write_all(&seq.seq).expect("Unable to write to file!");
+                out_validation.write(b"\n").expect("Unable to write to file!");
+            } else if rng.gen::<f32>() < test {
+                out_test.write_all(format!(">{}\n", &seq.id).as_bytes()).expect("Unable to write to file!");
+                out_test.write_all(&seq.seq).expect("Unable to write to file!");
+                out_test.write(b"\n").expect("Unable to write to file!");
+            } else {
+                out_train.write_all(format!(">{}\n", &seq.id).as_bytes()).expect("Unable to write to file!");
+                out_train.write_all(&seq.seq).expect("Unable to write to file!");
+                out_train.write(b"\n").expect("Unable to write to file!");
+            }
         } else {
             backoff.snooze();
             backoff.snooze();
@@ -170,14 +203,18 @@ fn process_output(filename: String, output_queue: Arc<ArrayQueue<ThreadCommand<S
     }
 }
 
-fn filter_sequence_child_worker(
+fn filter_sequence_worker(
         filter_tax_id: usize, 
         seq_queue: Arc<ArrayQueue<ThreadCommand<Sequence>>>,
-        output_queue: Arc<ArrayQueue<ThreadCommand<Sequence>>>,)
+        output_queue: Arc<ArrayQueue<ThreadCommand<Sequence>>>,
+        other: f32)
 {
     let mut contains_cache: HashMap<u32, bool> = HashMap::with_capacity(1024 * 8);
     let mut taxon_cache: HashMap<String, Option<super::Acc2TaxInner>> = HashMap::with_capacity(1024 * 8);
     let backoff = Backoff::new();
+
+    let mut rng = rand::thread_rng();
+
     
     loop {
         if let Ok(command) = seq_queue.pop() {
@@ -215,7 +252,7 @@ fn filter_sequence_child_worker(
                     get_complete_taxonomy(tax_id as usize).contains(&filter_tax_id));
 
             //if complete.contains(&filter_tax_id) {
-            if *contains {
+            if *contains || rng.gen::<f32>() < other {
                 let wp = ThreadCommand::Work(seq);
 
                 let mut result = output_queue.push(wp);
@@ -227,12 +264,12 @@ fn filter_sequence_child_worker(
         
             if contains_cache.len() > 1024 * 8 {
                 contains_cache.clear();
-		contains_cache.shrink_to(1024 * 8);
+		        contains_cache.shrink_to(1024 * 8);
             }
 
             if taxon_cache.len() > 1024 * 8 {
                 taxon_cache.clear();
-		taxon_cache.shrink_to(1024 * 8);
+		        taxon_cache.shrink_to(1024 * 8);
             }
 
         } else {
