@@ -20,6 +20,7 @@ use cached::SizedCache;
 
 mod parser;
 mod fasta;
+mod balance_and_shuffle;
 
 use std::str;
 use std::sync::Arc;

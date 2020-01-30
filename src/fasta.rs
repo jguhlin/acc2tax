@@ -47,7 +47,7 @@ pub struct Sequence {
     pub id:     String,
 }
 
-const STACKSIZE: usize = 16 * 1024 * 1024;  // Stack size (needs to be > BUFSIZE + SEQBUFSIZE)
+pub const STACKSIZE: usize = 16 * 1024 * 1024;  // Stack size (needs to be > BUFSIZE + SEQBUFSIZE)
 
 // And unpark it from the generator...
 #[pyfunction]
@@ -279,7 +279,7 @@ fn filter_sequence_worker(
     }
 }
 
-fn sequence_generator(
+pub fn sequence_generator(
         filename: String, 
         seq_queue: Arc<ArrayQueue<ThreadCommand<Sequence>>>, 
         output_queue: Arc<ArrayQueue<ThreadCommand<Sequence>>>, 
