@@ -327,7 +327,7 @@ pub fn chunk_file(filename: String, output_filename: String, chunk_size: usize) 
             Err(_)  => break
         };
 
-        for chunk in seq.seq.chunks_exact(chunk_size) {
+        for chunk in seq.seq.chunks(chunk_size) {
             let newseq = Sequence { 
                 id: seq.id.clone(),
                 seq: chunk.to_vec(),
