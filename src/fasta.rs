@@ -261,6 +261,8 @@ fn snappy_output(filename: String) -> Box<dyn Write> {
     Box::new(BufWriter::with_capacity(16 * 1024 * 1024, snap::write::FrameEncoder::new(buffer)))
 }
 
+
+
 pub fn split_train_test_validation(
         filename: String,
         output_prefix: String, 
@@ -414,8 +416,9 @@ pub fn shuffle_file(filename: String, output_filename: String, bins: usize) {
     }
 }
 
-pub fn child_taxon_seqlengths(filename: String, parent_tax_id: usize) {
-
+pub fn child_taxon_seqlengths(filename: String, parent_tax_id: usize) 
+    -> HashMap<usize, usize> 
+{
     let mut seqcounts: HashMap<usize, usize> = HashMap::with_capacity(64);
     let mut child_taxons: Vec<usize> = Vec::new();
     let mut names: HashMap<usize, String> = HashMap::new();
@@ -485,12 +488,217 @@ pub fn child_taxon_seqlengths(filename: String, parent_tax_id: usize) {
 
     pb.finish();
 
-    for (key, val) in seqcounts {
+    for (key, val) in seqcounts.clone() {
         let name = names.get(&key).unwrap();
         println!("{}: {}", name, val);
     }
+
+    seqcounts
 }
 
+fn mutate_sequence(seq: &mut Vec<u8>, rate: f32) {
+    let mut rng = rand::thread_rng();
+    let nucleotides = [65, 67, 71, 84, 78];
+
+    for c in seq.iter_mut() {
+        if rng.gen::<f32>() < rate {
+            *c = *nucleotides.choose(&mut rng).unwrap();
+        }
+    }
+}
+
+pub fn balance_sequences(filename: String,
+                        output_filename: String,
+                        parent_tax_id: usize, // Have to balance relative to a parent taxon
+                        minimum_length: usize) 
+{
+
+    let mut child_taxons = Vec::new();
+
+    let mut original_lengths = HashMap::new();
+    for (tax_id, length) in child_taxon_seqlengths(filename.clone(), parent_tax_id) {
+        if length >= minimum_length {
+            original_lengths.insert(tax_id, length);
+            child_taxons.push(tax_id);
+        }
+    }
+
+    let max = original_lengths.values().max().unwrap();
+    let target = (0.965 * *max as f32) as usize;
+
+    let mut current_lengths = original_lengths.clone();
+
+    let (mut reader, mut pb) = open_file_with_progress_bar(filename.clone());
+    let mut balanced_out = snappy_output(format!("{}.min{}.sz", output_filename, minimum_length));
+
+    loop {
+        let mut seq: Sequence = match bincode::deserialize_from(&mut reader) {
+            Ok(x)   => x,
+            Err(_)  => break
+        };
+
+        seq.seq = seq.seq.to_ascii_uppercase().to_vec();
+
+        let mut cur_tax_id: usize = 0;
+
+        for tax_id in &child_taxons {
+            if (seq.taxons.contains(&tax_id)) {
+                cur_tax_id = *tax_id;
+                break;
+            }
+        }
+
+        // If we don't find a match then go to the next sequence
+        if cur_tax_id == 0 {
+            continue;
+        }
+
+        let cur_length = current_lengths.get_mut(&cur_tax_id).unwrap();
+        if *cur_length >= target {
+            bincode::serialize_into(&mut balanced_out, &seq).expect("Unable to write to bincode file");
+        } else {
+            
+            // Need to generate additional sequence...
+            let seqlen = seq.seq.len();
+            let taxon_length = original_lengths.get(&cur_tax_id).unwrap();
+            // Too short, can't do anything!
+            if seqlen < 100 {
+                continue;
+            }
+
+            // Write out what we have so we don't go lower...
+            bincode::serialize_into(&mut balanced_out, &seq).expect("Unable to write to bincode file");
+
+            let pct = (seqlen as f64 / *taxon_length as f64) as f64;
+            let need_seq_amount = (target as f64 * pct) as usize;
+            let mut generated_seq = 0;
+
+            pb.set_message(&format!("Current Length: {} Need: {} Generated: {}", *cur_length, need_seq_amount, generated_seq));
+
+            // Need to generate need_seq_amount of new sequence...
+            // Sliding window is easiest to start with...
+            let mut stopping = seqlen;
+            stopping = stopping.saturating_sub(100);
+            if stopping > 0 {
+                for i in 1..stopping {
+                    let newseq = Sequence {
+                        id: seq.id.clone(), 
+                        taxons: seq.taxons.clone(),
+                        taxon: seq.taxon.clone(),
+                        seq: seq.seq[i..].to_vec()
+                    };
+
+                    generated_seq += newseq.seq.len();
+                    pb.set_message(&format!("Current Length: {} Need: {} Generated: {}", *cur_length, need_seq_amount, generated_seq));
+
+                    bincode::serialize_into(&mut balanced_out, &newseq).expect("Unable to write to bincode file");
+                    if generated_seq >= need_seq_amount {
+                        break;
+                    }
+                }
+            }
+
+            // Not enough, let's reverse complement it and get some from there too...
+            if generated_seq <= need_seq_amount {
+                let mut revseq = seq.seq.clone();
+                complement_nucleotides(&mut revseq);
+                revseq.reverse();
+
+                let seqlen = revseq.len();
+                let mut stopping = seqlen;
+                stopping = stopping.saturating_sub(100);
+                
+                for i in 0..stopping {
+                    let newseq = Sequence {
+                        id: seq.id.clone(), 
+                        taxons: seq.taxons.clone(),
+                        taxon: seq.taxon.clone(),
+                        seq: seq.seq[i..].to_vec()
+                    };
+
+                    generated_seq += newseq.seq.len();
+                    pb.set_message(&format!("Current Length: {} Need: {} Generated: {}", *cur_length, need_seq_amount, generated_seq));
+
+                    bincode::serialize_into(&mut balanced_out, &newseq).expect("Unable to write to bincode file");
+                    if generated_seq >= need_seq_amount {
+                        break;
+                    }
+                }
+            }
+
+            let mut mutation_rate: f32 = 0.005;
+            while generated_seq <= need_seq_amount {
+                let mut mutseq = seq.seq.clone();
+                mutate_sequence(&mut mutseq, mutation_rate);
+
+                let newseq = Sequence {
+                    id: seq.id.clone(), 
+                    taxons: seq.taxons.clone(),
+                    taxon: seq.taxon.clone(),
+                    seq: mutseq.clone()
+                };
+
+                generated_seq += newseq.seq.len();
+                pb.set_message(&format!("Current Length: {} Need: {} Generated: {}", *cur_length, need_seq_amount, generated_seq));
+                bincode::serialize_into(&mut balanced_out, &newseq).expect("Unable to write to bincode file");
+                mutation_rate += 0.001;
+
+                let mut revseq = seq.seq.clone();
+                complement_nucleotides(&mut revseq);
+                revseq.reverse();
+                mutate_sequence(&mut revseq, mutation_rate);
+
+                let newseq = Sequence {
+                    id: seq.id.clone(), 
+                    taxons: seq.taxons.clone(),
+                    taxon: seq.taxon.clone(),
+                    seq: revseq.clone()
+                };
+
+                generated_seq += newseq.seq.len();
+                pb.set_message(&format!("Current Length: {} Need: {} Generated: {}", *cur_length, need_seq_amount, generated_seq));
+                bincode::serialize_into(&mut balanced_out, &newseq).expect("Unable to write to bincode file");
+
+
+
+            }
+
+            pb.set_message("Finished generating...");
+            
+            *cur_length += generated_seq;
+        }
+    }
+
+    pb.finish();
+    drop(reader);
+    child_taxon_seqlengths(format!("{}.min{}.sz", output_filename, minimum_length), parent_tax_id);
+}
+
+#[inline]
+fn _complement_nucl(nucl: u8) -> u8 {
+    // N -> 78
+    // A -> 65
+    // C -> 67
+    // G -> 71
+    // T -> 84
+    match &nucl {
+        65 => 84, // A -> T
+        67 => 71, // C -> G
+        84 => 65, // T -> A
+        71 => 67, // G -> C
+        78 => 78, // Complement of N is N
+        _ => { 78 },  // Everything else -> N
+    }
+}
+
+// Mutability here because we change everything to uppercase
+/// Reverse complement(RC) nucleotides
+#[inline]
+pub fn complement_nucleotides(slice: &mut [u8]) {
+    for x in slice.iter_mut() {
+        *x = _complement_nucl(*x);
+    }
+}
 
 pub fn filter_annotated_file(filename: String, tax_id: usize, num_threads: usize) {
     let seq_queue = Arc::new(ArrayQueue::<ThreadCommand<Sequence>>::new(1024 * 128));
@@ -1087,3 +1295,4 @@ pub fn sequence_generator(
 
     terminate_queue(out_queue, threadpool.num_threads);
 }
+

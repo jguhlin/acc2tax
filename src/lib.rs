@@ -395,6 +395,7 @@ fn acc2tax(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_wrapped(wrap_pyfunction!(split_train_test_validation))?;
     m.add_wrapped(wrap_pyfunction!(chunk_file))?;
     m.add_wrapped(wrap_pyfunction!(shuffle_file))?;
+    m.add_wrapped(wrap_pyfunction!(balance_sequences))?;
 
     // Need a function to get the parents
     // Need a function to get the parents & ranks given a taxon (or accession)
@@ -447,4 +448,13 @@ fn convert_ntfasta_file(filename: String,
                     num_threads: usize,) 
 {
     fasta::convert_ntfasta_file(filename, output, num_threads);
+}
+
+#[pyfunction]
+fn balance_sequences(filename: String,
+    output_filename: String,
+    parent_tax_id: usize, // Have to balance relative to a parent taxon
+    minimum_length: usize) 
+{
+    fasta::balance_sequences(filename, output_filename, parent_tax_id, minimum_length);
 }
