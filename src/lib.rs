@@ -376,7 +376,7 @@ fn get_parent_taxons(taxon: usize) -> Vec<usize> {
 
 #[pyfunction]
 fn get_parent_taxons_names(taxon: usize) -> Vec<(usize, String)> {
-    let parent_taxons = get_parent_taxons(parent_taxon);
+    let parent_taxons = get_parent_taxons(taxon);
     let mut parent_taxons_names = Vec::with_capacity(parent_taxons.len());
 
     let names = NAMES.get().expect("Names not initialized");
