@@ -359,6 +359,36 @@ fn get_child_taxons(parent_taxon: usize) -> Vec<usize> {
 }
 
 #[pyfunction]
+fn get_parent_taxons(taxon: usize) -> Vec<usize> {
+    let mut parent_taxons: Vec<usize> = Vec::with_capacity(100);
+
+    let taxon_to_parent = TAXON2PARENT.get().expect("Data not initialized!");
+
+    let mut cur_tax_id = taxon;
+    while taxon > 0 {
+        cur_tax_id = taxon_to_parent[cur_tax_id];
+        parent_taxons.push(cur_tax_id);
+    }
+
+    parent_taxons.shrink_to_fit();
+    parent_taxons
+}
+
+#[pyfunction]
+fn get_parent_taxons_names(taxon: usize) -> Vec<(usize, String)> {
+    let parent_taxons = get_parent_taxons(parent_taxon);
+    let mut parent_taxons_names = Vec::with_capacity(parent_taxons.len());
+
+    let names = NAMES.get().expect("Names not initialized");
+
+    for parent in parent_taxons {
+        parent_taxons_names.push((parent, names.get(parent).unwrap().to_string()))
+    }
+
+    parent_taxons_names
+}
+
+#[pyfunction]
 fn get_child_taxons_names(parent_taxon: usize) -> Vec<(usize, String)> {
     let child_taxons = get_child_taxons(parent_taxon);
     let mut child_taxons_names = Vec::with_capacity(child_taxons.len());
@@ -394,6 +424,8 @@ fn acc2tax(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_wrapped(wrap_pyfunction!(convert_ntfasta_file))?;
     m.add_wrapped(wrap_pyfunction!(filter_annotated_file))?;
     m.add_wrapped(wrap_pyfunction!(filter_annotated_file_singlethreaded))?;
+    m.add_wrapped(wrap_pyfunction!(get_parent_taxons))?;
+    m.add_wrapped(wrap_pyfunction!(get_parent_taxons_names))?;
     m.add_wrapped(wrap_pyfunction!(get_child_taxons))?;
     m.add_wrapped(wrap_pyfunction!(get_child_taxons_names))?;
     m.add_wrapped(wrap_pyfunction!(get_taxon_rank))?;
