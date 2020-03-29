@@ -378,6 +378,12 @@ fn get_taxon_rank(taxon: usize) -> String {
     taxon_rank.get(taxon).unwrap().to_string()
 }
 
+#[pyfunction]
+fn get_taxon_name(taxon: usize) -> String {
+    let taxon_names = NAMES.get().expect("Taxon Names not initialized");
+    taxon_names.get(taxon).unwrap().to_string()
+}
+
 #[pymodule]
 fn acc2tax(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_wrapped(wrap_pyfunction!(init))?;
@@ -391,6 +397,7 @@ fn acc2tax(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_wrapped(wrap_pyfunction!(get_child_taxons))?;
     m.add_wrapped(wrap_pyfunction!(get_child_taxons_names))?;
     m.add_wrapped(wrap_pyfunction!(get_taxon_rank))?;
+    m.add_wrapped(wrap_pyfunction!(get_taxon_name))?;
     m.add_wrapped(wrap_pyfunction!(child_taxon_seqlengths))?;
     m.add_wrapped(wrap_pyfunction!(split_train_test_validation))?;
     m.add_wrapped(wrap_pyfunction!(chunk_file))?;
