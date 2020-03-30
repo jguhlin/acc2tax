@@ -8,6 +8,7 @@ extern crate serde;
 extern crate bytelines;
 extern crate snap;
 extern crate rand;
+extern crate sled;
 
 #[macro_use] extern crate cached;
 
@@ -58,15 +59,7 @@ pub type Result = (String, String, u32);
 static NAMES: OnceCell<Vec<String>>       = OnceCell::new();
 static TAXON2PARENT: OnceCell<Vec<usize>> = OnceCell::new();
 static TAXON_RANK: OnceCell<Vec<String>>  = OnceCell::new();
-
-fn get_filesize(filename: String) -> usize {
-    let file = match File::open(filename) {
-        Ok(file) => file,
-        Err(_x)   => return 0_usize
-    };
-
-    file.metadata().unwrap().len() as usize
-}
+static ACC2TAX: OnceCell<String>          = OnceCell::new();
 
 fn load_taxon(filename: &str) -> Option<Acc2TaxInner> {
     let file = match File::open(filename) {
@@ -203,11 +196,12 @@ pub fn init(
     // let mut new = false;
     let acc2tax: Acc2Tax; // = Default::default();
 
-
     if Path::new("taxon_rank.bc").exists() {
         data = load_existing();
     } else {
-        // new = true;
+
+        let a2tdb = sled::open("acc2tax.db");
+        
         println!("Binary files do not exist, generating... This can take up to 60 minutes the first time...");
         println!("Processing acc2tax file");
         data = parser::read_taxonomy(num_threads, acc2tax_filename, nodes_filename, names_filename);
@@ -244,100 +238,6 @@ pub fn init(
     NAMES.set(names).expect("Unable to set. Already initialized?");
     TAXON2PARENT.set(taxon_to_parent).expect("Unable to set. Already initialized?");
     TAXON_RANK.set(taxon_rank).expect("Unable to set. Already initialized?");
-
-    /*
-    if new {
-        let mut taxon_level_to_acc: TaxonLevels2Acc = Default::default();
-        taxon_level_to_acc.reserve(100_000);
-
-        let taxon_rank = TAXON_RANK.get().expect("Taxon rank not properly loaded...");
-        let taxon_to_parent = TAXON2PARENT.get().expect("Taxon2Parent not properly loaded");
-
-        // let mut accessions: Vec<ThinVec<u8>> = Vec::with_capacity(300_000_000); // 260_424_480
-                                                                 
-        /* for (_, mut all) in acc2tax.drain() {
-            for (acc, _) in all.drain() {
-                let mut accthin = ThinVec::with_capacity(acc.len());
-                accthin.extend_from_slice(&acc[..]);
-                accessions.push(accthin);
-            }
-        }
-
-        drop(acc2tax);
-
-        for acc in accessions {
-            let tax_id = get_taxon(String::from_utf8(acc.to_vec()).unwrap());
-            let mut work_tax_id = tax_id;
-            loop {
-                if work_tax_id == 0 { break; }
-                if work_tax_id == 1 { break; }
-
-                let parent_tax_id: u32 = taxon_to_parent[work_tax_id as usize] as u32;
-                
-                let entry = taxon_level_to_acc
-                                .entry(parent_tax_id)
-                                .or_insert_with(Vec::new);
-
-                entry.push( (acc.clone(), work_tax_id) );
-
-                // Iteratively move up...
-                work_tax_id = parent_tax_id;
-            }
-        } */
-
-        let pb = ProgressBar::new(acc2tax.len() as u64);
-        pb.set_style(ProgressStyle::default_bar()
-        .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {eta} {msg}")
-        .progress_chars("█▇▆▅▄▃▂▁  "));
-
-        let mut i = 0;
-        
-        for (_, mut all) in pb.wrap_iter(acc2tax.drain()) {
-            i += 1;
-            let mut alllen = all.len();
-            pb.set_message(&format!("{}", alllen));
-            for (acc, tax_id) in all.drain() {
-                
-                let mut work_tax_id = tax_id;
-
-                let mut accthin = ThinVec::with_capacity(acc.len());
-                accthin.extend_from_slice(&acc[..]);
-
-                loop {
-                    if work_tax_id == 0 { break; }
-                    if work_tax_id == 1 { break; }
-
-                    let parent_tax_id: u32 = taxon_to_parent[work_tax_id as usize] as u32;
-                    
-                    let entry = taxon_level_to_acc
-                                    .entry(parent_tax_id)
-                                    .or_insert_with(Default::default);
-
-                    let entry_inner = entry.entry(work_tax_id).or_insert_with(Vec::new);
-                    entry_inner.push(accthin.clone());
-
-                    // Should be another hashmap that is work_tax_id => accthin
-                    // So we aren't duplicating all of this all the time...
-
-                    // entry.push( (accthin, work_tax_id) );
-
-                    // Iteratively move up...
-                    assert_ne!(work_tax_id, parent_tax_id);
-
-                    if i >= 7898 {
-                        println!("{}", i);
-                        println!("{} {}", work_tax_id, parent_tax_id);
-                    }
-
-                    work_tax_id = parent_tax_id;
-                
-                }
-            }
-        }
-
-        // let mut taxon_level_to_acc_fh = snap::Writer::new(File::create("taxon_level_to_acc.bc").unwrap());
-        // bincode::serialize_into(&mut taxon_level_to_acc_fh, &taxon_level_to_acc).expect("Unable to write to bincode file");
-    } */
 
     println!("Loaded taxonomy databases");
 }
