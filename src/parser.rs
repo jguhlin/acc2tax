@@ -18,13 +18,14 @@ impl ThreadCommand<Vec<Vec<u8>>> {
     }
 }
 
+const SHORT_LENGTH: usize = 8;
+
 pub fn shorten(acc: &str) -> String {
     let length = acc.len();
-    let short_length = 6;
-    let max = if length < short_length {
+    let max = if length < SHORT_LENGTH {
                     length
                 } else {
-                    short_length
+                    SHORT_LENGTH
                 };
         
     acc[..max].to_string()
