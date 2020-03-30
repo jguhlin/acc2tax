@@ -411,7 +411,7 @@ fn get_taxon_rank(taxon: usize) -> String {
 #[pyfunction]
 fn get_taxon_name(taxon: usize) -> String {
     let taxon_names = NAMES.get().expect("Taxon Names not initialized");
-    taxon_names.get(taxon).unwrap().to_string()
+    taxon_names.get(taxon).unwrap_or(&"Not Found".to_string()).to_string()
 }
 
 #[pymodule]
