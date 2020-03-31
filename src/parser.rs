@@ -129,9 +129,11 @@ pub fn read_taxonomy(
     jobs.fetch_sub(1); // Merger thread extra...
 
     while jobs.load() > 0 {
-        pb.set_message(&format!("{} jobs remaining", jobs));
+        pb.set_message(&format!("{} jobs remaining", jobs.load()));
         backoff.snooze();
     }
+
+    pb.set_message("All jobs finished...");
 
     for _ in 0..num_threads {
         match queue.push(ThreadCommand::Terminate) {
@@ -139,6 +141,8 @@ pub fn read_taxonomy(
             Err(x) => panic!("Unable to send command... {:#?}", x)
         }
     }
+
+    pb.set_message("Terminate commands sent...");
 
     for child in children {
         child.join().expect("Unable to  join child thread");
