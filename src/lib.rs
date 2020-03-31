@@ -9,19 +9,20 @@ extern crate bytelines;
 extern crate snap;
 extern crate rand;
 extern crate sled;
+extern crate zerocopy;
+extern crate byteorder;
 
-#[macro_use] extern crate cached;
-
-use cached::SizedCache;
-
-// use mimalloc::MiMalloc;
-
-// #[global_allocator]
-// static GLOBAL: MiMalloc = MiMalloc;
+use byteorder::{BigEndian};
+use byteorder::ByteOrder;
+use zerocopy::{AsBytes, 
+               FromBytes, 
+               LayoutVerified, 
+               Unaligned, 
+               U16, 
+               U32,};
 
 mod parser;
-mod fasta;
-// mod balance_and_shuffle;
+// mod fasta;
 
 use std::str;
 use std::sync::Arc;
@@ -46,22 +47,20 @@ use crossbeam::atomic::AtomicCell;
 use crossbeam::queue::{ArrayQueue, PushError};
 
 use bytelines::*;
-use rayon::prelude::*;
 
 use thincollections::thin_vec::ThinVec;
 
-pub type Acc2TaxInner = HashMap<String, u32, BuildHasherDefault<XxHash>>;
-pub type Acc2Tax = HashMap<String, Acc2TaxInner, BuildHasherDefault<XxHash>>;
 pub type TaxonLevels2AccInner = HashMap<u32, Vec<ThinVec<u8>>, BuildHasherDefault<XxHash>>;
 pub type TaxonLevels2Acc = HashMap<u32, TaxonLevels2AccInner, BuildHasherDefault<XxHash>>;
-pub type Result = (String, String, u32);
+pub type Result = (String, U32<BigEndian>);
 
 static NAMES: OnceCell<Vec<String>>       = OnceCell::new();
 static TAXON2PARENT: OnceCell<Vec<usize>> = OnceCell::new();
 static TAXON_RANK: OnceCell<Vec<String>>  = OnceCell::new();
-static ACC2TAX: OnceCell<String>          = OnceCell::new();
+static ACC2TAX: OnceCell<Arc<sled::Db>>        = OnceCell::new();
 
-fn load_taxon(filename: &str) -> Option<Acc2TaxInner> {
+// TODO: Update this and fasta annotator stuff...
+/*fn load_taxon(filename: &str) -> Option<Acc2TaxInner> {
     let file = match File::open(filename) {
         Ok(file) => file,
         Err(_x)   => return None
@@ -69,39 +68,27 @@ fn load_taxon(filename: &str) -> Option<Acc2TaxInner> {
 
     let fh = BufReader::with_capacity(256 * 1024, file);
     Some(bincode::deserialize_from(snap::read::FrameDecoder::new(fh)).expect("Unable to read file..."))
-}
+}*/
 
 #[pyfunction]
 pub fn get_taxon(accession: String) -> u32 {
 
     let accession = accession.split_ascii_whitespace().take(1).collect::<String>();
-
-    let short: String = parser::shorten(&accession);
-    
-    let map = match load_taxon(&format!("acc2tax_db/{}.bc", &short.to_string())) {
-        Some(x) => x,
-        None    => return 0
+    let acc2tax = ACC2TAX.get().expect("Data not initialized");
+    let x = match acc2tax.get(accession) {
+        Ok(x)  => x,
+        Err(y) => panic!("DB Error: {}", y),
     };
 
-    // println!("Loaded taxon map... {}", &short.to_string());
-
-    // let tax_id = 
-    match map.get(&accession) {
-        Some(x) => *x,
-        None    => { // println!("Unable to find entry! {}", accession.clone()); 
-                    0 }
+    match x {
+        None    => 0,
+        Some(x) => {
+            BigEndian::read_u32(&x)
+        }
     }
-    //};
-
-    // println!("Returning taxid: {}", tax_id);
-
-    // tax_id
-
-//    *map.get(&accession).unwrap()
-    
 }
 
-fn load_existing() -> (Option<Acc2Tax>, Vec<String>, Vec<usize>, Vec<String>) {
+fn load_existing() -> (Vec<String>, Vec<usize>, Vec<String>) {
     let names_fh = BufReader::with_capacity(64 * 1024 * 1024, File::open("names.bc").unwrap());
     let names = bincode::deserialize_from(snap::read::FrameDecoder::new(names_fh)).expect("Unable to read file...");
 
@@ -111,7 +98,7 @@ fn load_existing() -> (Option<Acc2Tax>, Vec<String>, Vec<usize>, Vec<String>) {
     let taxon_rank_fh = BufReader::with_capacity(64 * 1024 * 1024, File::open("taxon_rank.bc").unwrap());
     let taxon_rank = bincode::deserialize_from(snap::read::FrameDecoder::new(taxon_rank_fh)).expect("Unable to read file...");
 
-    (None, names, taxon_to_parent, taxon_rank)
+    (names, taxon_to_parent, taxon_rank)
 
 }
 
@@ -194,24 +181,15 @@ pub fn init(
 
     let (data, names, taxon_to_parent, taxon_rank);
     // let mut new = false;
-    let acc2tax: Acc2Tax; // = Default::default();
+
+    let a2tdb: Arc<sled::Db> = Arc::new(sled::open("acc2tax.db").expect("Unable to open database path, delete existing acc2tax.db and re-initialize. Check for free space on device."));
 
     if Path::new("taxon_rank.bc").exists() {
         data = load_existing();
     } else {
-
-        let a2tdb = sled::open("acc2tax.db");
-        
         println!("Binary files do not exist, generating... This can take up to 60 minutes the first time...");
         println!("Processing acc2tax file");
-        data = parser::read_taxonomy(num_threads, acc2tax_filename, nodes_filename, names_filename);
-
-        acc2tax = data.0.unwrap();
-
-        acc2tax.par_iter().for_each(|(short, all)| {
-            let mut acc2tax_fh = snap::write::FrameEncoder::new(File::create(format!("acc2tax_db/{}.bc", short.to_string())).unwrap());
-            bincode::serialize_into(&mut acc2tax_fh, &all).expect("Unable to write to bincode file");
-        });
+        data = parser::read_taxonomy(num_threads, Arc::clone(&a2tdb), acc2tax_filename, nodes_filename, names_filename);
 
         println!("Processing names file");
 
@@ -220,25 +198,26 @@ pub fn init(
         // serde_json::to_writer(acc2tax_fh, &acc2tax).expect("Unable to write JSON file...");
 
         let mut names_fh = snap::write::FrameEncoder::new(File::create("names.bc").unwrap());
-        bincode::serialize_into(&mut names_fh, &data.1).expect("Unable to write to bincode file");
+        bincode::serialize_into(&mut names_fh, &data.0).expect("Unable to write to bincode file");
 
         println!("Processing taxon to parent file");
         let mut taxon_to_parent_fh = snap::write::FrameEncoder::new(File::create("t2p.bc").unwrap());
-        bincode::serialize_into(&mut taxon_to_parent_fh, &data.2).expect("Unable to write to bincode file");
+        bincode::serialize_into(&mut taxon_to_parent_fh, &data.1).expect("Unable to write to bincode file");
 
         println!("Processing taxon rank file");
         let mut taxon_rank_fh = snap::write::FrameEncoder::new(File::create("taxon_rank.bc").unwrap());
-        bincode::serialize_into(&mut taxon_rank_fh, &data.3).expect("Unable to write to bincode file");
+        bincode::serialize_into(&mut taxon_rank_fh, &data.2).expect("Unable to write to bincode file");
     }
 
-    names = data.1;
-    taxon_to_parent = data.2;
-    taxon_rank = data.3;
+    names = data.0;
+    taxon_to_parent = data.1;
+    taxon_rank = data.2;
 
     NAMES.set(names).expect("Unable to set. Already initialized?");
     TAXON2PARENT.set(taxon_to_parent).expect("Unable to set. Already initialized?");
     TAXON_RANK.set(taxon_rank).expect("Unable to set. Already initialized?");
 
+    ACC2TAX.set(a2tdb).expect("Unable to set. Already initialized?");
     println!("Loaded taxonomy databases");
 }
 
@@ -321,27 +300,27 @@ fn acc2tax(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_wrapped(wrap_pyfunction!(get_complete_taxonomy))?;
     m.add_wrapped(wrap_pyfunction!(get_complete_taxonomy_dict))?;
     m.add_wrapped(wrap_pyfunction!(get_complete_taxonomy_names_dict))?;
-    m.add_wrapped(wrap_pyfunction!(convert_ntfasta_file))?;
-    m.add_wrapped(wrap_pyfunction!(filter_annotated_file))?;
-    m.add_wrapped(wrap_pyfunction!(filter_annotated_file_singlethreaded))?;
+    //m.add_wrapped(wrap_pyfunction!(convert_ntfasta_file))?;
+    //m.add_wrapped(wrap_pyfunction!(filter_annotated_file))?;
+    //m.add_wrapped(wrap_pyfunction!(filter_annotated_file_singlethreaded))?;
     m.add_wrapped(wrap_pyfunction!(get_parent_taxons))?;
     m.add_wrapped(wrap_pyfunction!(get_parent_taxons_names))?;
     m.add_wrapped(wrap_pyfunction!(get_child_taxons))?;
     m.add_wrapped(wrap_pyfunction!(get_child_taxons_names))?;
     m.add_wrapped(wrap_pyfunction!(get_taxon_rank))?;
     m.add_wrapped(wrap_pyfunction!(get_taxon_name))?;
-    m.add_wrapped(wrap_pyfunction!(child_taxon_seqlengths))?;
-    m.add_wrapped(wrap_pyfunction!(split_train_test_validation))?;
-    m.add_wrapped(wrap_pyfunction!(chunk_file))?;
-    m.add_wrapped(wrap_pyfunction!(shuffle_file))?;
-    m.add_wrapped(wrap_pyfunction!(balance_sequences))?;
+    //m.add_wrapped(wrap_pyfunction!(child_taxon_seqlengths))?;
+    //m.add_wrapped(wrap_pyfunction!(split_train_test_validation))?;
+    //m.add_wrapped(wrap_pyfunction!(chunk_file))?;
+    //m.add_wrapped(wrap_pyfunction!(shuffle_file))?;
+    //m.add_wrapped(wrap_pyfunction!(balance_sequences))?;
 
     // Need a function to get the parents
     // Need a function to get the parents & ranks given a taxon (or accession)
     Ok(())
 }
 
-#[pyfunction]
+/*#[pyfunction]
 fn split_train_test_validation(filename: String, output_prefix: String, test_pct: f32, validation_pct: f32)
 {
     fasta::split_train_test_validation(filename, output_prefix, test_pct, validation_pct);
@@ -396,4 +375,4 @@ fn balance_sequences(filename: String,
     minimum_length: usize) 
 {
     fasta::balance_sequences(filename, output_filename, parent_tax_id, minimum_length);
-}
+} */

@@ -1,7 +1,17 @@
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
+use std::sync::Arc;
 use super::*;
-// use thincollections::thin_vec::ThinVec;
+use sled;
+
+use byteorder::{BigEndian};
+use zerocopy::{byteorder::U64, 
+                AsBytes, 
+                FromBytes, 
+                LayoutVerified, 
+                Unaligned, 
+                U16, 
+                U32,};
 
 enum ThreadCommand<T> {
     Work(T),
@@ -38,34 +48,17 @@ fn parse_line(line: &[u8]) -> Result {
     let taxon = data[1].parse::<u32>().unwrap();
     // let acc: Vec<u8> = data[0].as_bytes().to_vec();
     let acc: String = data[0].to_string();
-    let short: String = shorten(&acc);
 
-    (short, acc, taxon)
+    (acc, U32::new(taxon))
 }
 
-fn into_map(
-    acc2tax: &mut Acc2Tax, 
-    data: Result) {
-    
-    let (short, acc, taxon) = data;
-
-    let secondary = match acc2tax.get_mut(&short) {
-        Some(x) => x,
-        None    => {
-                    let mut new_hash: HashMap<String, u32, BuildHasherDefault<XxHash>> = 
-                        Default::default();
-                    new_hash.reserve(100);
-                    acc2tax.insert(short.clone(), new_hash);
-                    acc2tax.get_mut(&short).unwrap()
-            }
-        };
-
-        secondary.insert(acc, taxon);
-}
-
-
-pub fn read_taxonomy(num_threads: usize, acc2tax_filename: String, nodes_filename: String, names_filename: String) -> 
-    (Option<Acc2Tax>, Vec<String>, Vec<usize>, Vec<String>) {
+pub fn read_taxonomy(
+        num_threads: usize, 
+        a2tdb: Arc<sled::Db>,
+        acc2tax_filename: String, 
+        nodes_filename: String, 
+        names_filename: String) -> 
+    (Vec<String>, Vec<usize>, Vec<String>) {
 
     let names_child = match Builder::new()
                         .name("ParseNames".into())
@@ -94,25 +87,18 @@ pub fn read_taxonomy(num_threads: usize, acc2tax_filename: String, nodes_filenam
     let backoff = Backoff::new();
 
     let mut children = Vec::new();
-    pb.set_message("Creating queue");
-    let queue = Arc::new(ArrayQueue::<ThreadCommand<Vec<Vec<u8>>>>::new(1024));
-    pb.set_message("Created queue");
-    // let results = Arc::new(SegQueue::<Acc2Tax>::new());
-    // let results = Arc::new(SegQueue::<Vec<Result>>::new());
-    pb.set_message("Creating results queue");
-    let results = Arc::new(ArrayQueue::<Vec<Result>>::new(1024));
-    pb.set_message("Created results queue"); 
+    let queue = Arc::new(ArrayQueue::<ThreadCommand<Vec<Vec<u8>>>>::new(8192));
 
     let jobs = Arc::new(AtomicCell::new(0 as usize));
 
     for _ in 0..num_threads {
         let queue = Arc::clone(&queue);
-        let results = Arc::clone(&results);
         let jobs = Arc::clone(&jobs);
+        let a2tdb = Arc::clone(&a2tdb);
 
         let child = match Builder::new()
                         .name("TaxonReader".into())
-                        .spawn(move || _worker_thread(queue, results, jobs)) {
+                        .spawn(move || _worker_thread(queue, a2tdb, jobs)) {
                             Ok(x) => x,
                             Err(y) => panic!("{}", y)
                         };
@@ -120,42 +106,8 @@ pub fn read_taxonomy(num_threads: usize, acc2tax_filename: String, nodes_filenam
     }
 
     jobs.fetch_add(1); // So the merger thread doesn't stop right away...
-    let merger_child;
-
-    {
-        let results = Arc::clone(&results);
-        let jobs = Arc::clone(&jobs);
-        merger_child = match Builder::new()
-                    .name("MergerWorker".into())
-                    .spawn(move || _merger_thread(results, jobs)) {
-                        Ok(x) => x,
-                        Err(y) => panic!("{}", y)
-                    };
-    }
 
     let mut lines = 0;
-
-    /* gb2accession
-        .byte_lines()
-        .into_iter()
-        .skip(1)
-        .par_bridge()
-        .for_each(|line| { 
-            let mut result = results.push(parse_line(&line.unwrap()));
-
-            // lines += 1;
-            
-            while let Err(PushError(x)) = result {
-                // pb.set_message("Full!");
-                result = results.push(x);    
-            }
-
-            // pb.set_message(&format!("{} lines", lines));
-
-        });
-
-    println!("Done with iter");
-    println!(); */
 
     for chunk in gb2accession.byte_lines().into_iter().skip(1).chunks(2 * 1024 * 1024).into_iter() {
         let work = chunk.map(|x| x.unwrap()).collect::<Vec<Vec<u8>>>();
@@ -189,31 +141,17 @@ pub fn read_taxonomy(num_threads: usize, acc2tax_filename: String, nodes_filenam
         child.join().expect("Unable to  join child thread");
     }
 
-    let mut acc2tax = merger_child.join().expect("Unable to join merger thread");
-    acc2tax.shrink_to_fit();
-    for (_k,v) in acc2tax.iter_mut() {
-        v.shrink_to_fit();
-    }
-
     let names = names_child.join().expect("Unable to join taxonomy names thread");
     let (taxon_to_parent, taxon_rank) = nodes_child.join().expect("Unable to join taxonomy nodes thread");
 
     pb.finish_with_message("Complete");
 
-    (Some(acc2tax), names, taxon_to_parent, taxon_rank)
+    (names, taxon_to_parent, taxon_rank)
 }
 
 fn _worker_thread(queue: Arc<ArrayQueue<ThreadCommand<Vec<Vec<u8>>>>>, 
-                    results: Arc<ArrayQueue<Vec<Result>>>, 
-                    // results: Arc<SegQueue<Acc2Tax>>, 
-                    jobs: Arc<AtomicCell<usize>>) {
-
-    /* let mut acc2tax: HashMap<
-        Vec<u8>,
-        HashMap<Vec<u8>, u32, BuildHasherDefault<XxHash>>,
-        BuildHasherDefault<XxHash>> = Default::default();
-
-    acc2tax.reserve(1_000); */
+                  a2tdb: Arc<sled::Db>,
+                  jobs: Arc<AtomicCell<usize>>) {
 
     let backoff = Backoff::new();
 
@@ -231,40 +169,11 @@ fn _worker_thread(queue: Arc<ArrayQueue<ThreadCommand<Vec<Vec<u8>>>>>,
                     .map(|x| parse_line(&x))
                     .collect::<Vec<Result>>();
 
-                   // .fold(acc2tax.clone(), into_map);
-
-/*             for (key, val) in result.iter_mut() {
-                val.shrink_to_fit();
+            for (x, y) in result {
+                a2tdb.insert(x, y.as_bytes()).expect("Unable to add to database");
             }
 
-            result.shrink_to_fit(); */
-            
-            results.push(result).expect("Unable to push onto results in parser");
             jobs.fetch_sub(1);
-        } else {
-            backoff.snooze();
-        }
-    }
-}
-
-fn _merger_thread(// results: Arc<SegQueue<Acc2Tax>>, 
-                    results: Arc<ArrayQueue<Vec<Result>>>, 
-                    jobs: Arc<AtomicCell<usize>>) -> Acc2Tax {
-
-    let mut acc2tax: Acc2Tax = Default::default();
-
-    acc2tax.reserve(50_000);
-
-    loop {
-        let backoff = Backoff::new();
-
-        if let Ok(a2t) = results.pop() {
-            // into_map(&mut acc2tax, a2t);
-            for x in a2t {
-                into_map(&mut acc2tax, x);
-            }
-        } else if results.is_empty() && jobs.load() == 0 {
-            return acc2tax;
         } else {
             backoff.snooze();
         }
