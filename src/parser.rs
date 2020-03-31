@@ -3,6 +3,7 @@ use indicatif::ProgressStyle;
 use std::sync::Arc;
 use super::*;
 use sled;
+use sled::Batch;
 
 use byteorder::{BigEndian};
 use zerocopy::{byteorder::U64, 
@@ -178,7 +179,7 @@ fn _worker_thread(queue: Arc<ArrayQueue<ThreadCommand<Vec<Vec<u8>>>>>,
 
             let mut batch = Batch::default();
             for (x, y) in result {
-                batch.insert(x, y.as_bytes()).expect("Unable to add to database");
+                batch.insert(x.as_bytes(), y.as_bytes());
             }
 
             a2tdb.apply_batch(batch).expect("Unable to apply batch transaction");
