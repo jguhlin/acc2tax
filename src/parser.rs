@@ -109,7 +109,7 @@ pub fn read_taxonomy(
 
     let mut lines = 0;
 
-    for chunk in gb2accession.byte_lines().into_iter().skip(1).chunks(2 * 1024 * 1024).into_iter() {
+    for chunk in gb2accession.byte_lines().into_iter().skip(1).chunks(8192).into_iter() {
         let work = chunk.map(|x| x.unwrap()).collect::<Vec<Vec<u8>>>();
 
         lines += work.len();
@@ -124,9 +124,12 @@ pub fn read_taxonomy(
         }
     }
 
+    pb.set_message("Completed processing all lines...");
+
     jobs.fetch_sub(1); // Merger thread extra...
 
     while jobs.load() > 0 {
+        pb.set_message(&format!("{} jobs remaining", jobs));
         backoff.snooze();
     }
 
@@ -169,9 +172,12 @@ fn _worker_thread(queue: Arc<ArrayQueue<ThreadCommand<Vec<Vec<u8>>>>>,
                     .map(|x| parse_line(&x))
                     .collect::<Vec<Result>>();
 
+            let mut batch = Batch::default();
             for (x, y) in result {
-                a2tdb.insert(x, y.as_bytes()).expect("Unable to add to database");
+                batch.insert(x, y.as_bytes()).expect("Unable to add to database");
             }
+
+            a2tdb.apply_batch(batch).expect("Unable to apply batch transaction");
 
             jobs.fetch_sub(1);
         } else {
