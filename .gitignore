@@ -17,3 +17,4 @@ serde.bincode
 acc2tax_db/*
 *.so
 .vstags
+*.log
