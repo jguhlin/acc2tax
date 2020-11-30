@@ -193,6 +193,7 @@ pub fn init(
         data = load_existing();
     } else {
         let mut writeoptions = rockoptions.clone();
+        writeoptions.create_if_missing(true);
         writeoptions.set_bytes_per_sync(8 * 1024 * 1024);
         writeoptions.set_db_write_buffer_size(128 * 1024 * 1024);
         writeoptions.set_write_buffer_size(256 * 1024 * 1024);
