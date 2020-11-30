@@ -3,25 +3,30 @@
 extern crate bincode;
 extern crate flate2;
 extern crate itertools;
-// extern crate mimalloc;
 extern crate bytelines;
 extern crate byteorder;
 extern crate rand;
 extern crate serde;
-extern crate sled;
 extern crate snap;
 extern crate zerocopy;
+extern crate mimalloc;
+extern crate rocksdb;
+
+use rocksdb::{DB, Options};
+
+use mimalloc::MiMalloc;
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 use byteorder::BigEndian;
 use byteorder::ByteOrder;
-use zerocopy::{AsBytes, FromBytes, LayoutVerified, Unaligned, U16, U32};
+use zerocopy::{U32};
 
 mod parser;
 // mod fasta;
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::fs::File;
-use std::hash::BuildHasherDefault;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::str;
@@ -29,8 +34,6 @@ use std::sync::Arc;
 use std::thread::Builder;
 
 use once_cell::sync::OnceCell;
-
-use twox_hash::XxHash;
 
 use itertools::Itertools;
 
@@ -45,14 +48,14 @@ use bytelines::*;
 
 use thincollections::thin_vec::ThinVec;
 
-pub type TaxonLevels2AccInner = HashMap<u32, Vec<ThinVec<u8>>, BuildHasherDefault<XxHash>>;
-pub type TaxonLevels2Acc = HashMap<u32, TaxonLevels2AccInner, BuildHasherDefault<XxHash>>;
+pub type TaxonLevels2AccInner = HashMap<u32, Vec<ThinVec<u8>>>;
+pub type TaxonLevels2Acc = HashMap<u32, TaxonLevels2AccInner>;
 pub type Result = (String, U32<BigEndian>);
 
 static NAMES: OnceCell<Vec<String>> = OnceCell::new();
 static TAXON2PARENT: OnceCell<Vec<usize>> = OnceCell::new();
 static TAXON_RANK: OnceCell<Vec<String>> = OnceCell::new();
-static ACC2TAX: OnceCell<Arc<sled::Db>> = OnceCell::new();
+static ACC2TAX: OnceCell<Arc<DB>> = OnceCell::new();
 
 // TODO: Update this and fasta annotator stuff...
 /*fn load_taxon(filename: &str) -> Option<Acc2TaxInner> {
@@ -173,31 +176,30 @@ pub fn init(
     nodes_filename: String,
     names_filename: String,
 ) {
-    match TAXON_RANK.get() {
-        Some(_) => return, // Already initialized
-        None => (),
-    };
-
-    // Initializes the database
+    if TAXON_RANK.get().is_some() { return }
 
     let (data, names, taxon_to_parent, taxon_rank);
     // let mut new = false;
 
-    let sledconfig = sled::Config::default()
-        .path("acc2tax.db".to_owned())
-        .cache_capacity(1024 * 1024)
-        // .use_compression(true)
-        .mode(sled::Mode::HighThroughput);
-
-        // .compression_factor(9);
-    let a2tdb = Arc::new(sledconfig.open().expect("Unable to open database path, delete existing acc2tax.db and re-initialize. Check for free space on device."));
-
+    let mut rockoptions = Options::default();
+    rockoptions.increase_parallelism(num_threads as i32);
+    rockoptions.set_level_compaction_dynamic_level_bytes(true);
+    rockoptions.set_compaction_readahead_size(8 * 1024 * 1024);
+    
+    // let a2tdb = Arc::new(sledconfig.open().expect("Unable to open database path, delete existing acc2tax.db and re-initialize. Check for free space on device."));
     // let a2tdb: Arc<sled::Db> = Arc::new(sled::open("acc2tax.db").expect("Unable to open database path, delete existing acc2tax.db and re-initialize. Check for free space on device."));
-
-    // if Path::new("taxon_rank.bc").exists() {
-    if a2tdb.len() > 0 {
+    if Path::new("taxon_rank.bc").exists() {
+    // if a2tdb.len() > 0 {
         data = load_existing();
     } else {
+        let mut writeoptions = rockoptions.clone();
+        writeoptions.set_bytes_per_sync(8 * 1024 * 1024);
+        writeoptions.set_db_write_buffer_size(128 * 1024 * 1024);
+        writeoptions.set_write_buffer_size(256 * 1024 * 1024);
+        writeoptions.prepare_for_bulk_load();
+
+        let a2tdb = Arc::new(DB::open(&writeoptions, "acc2tax.db").expect("Unable to open db for writing"));
+        
         println!("Binary files do not exist, generating... This can take up to 60 minutes the first time...");
         println!("Processing acc2tax file");
         data = parser::read_taxonomy(
@@ -228,7 +230,13 @@ pub fn init(
             snap::write::FrameEncoder::new(File::create("taxon_rank.bc").unwrap());
         bincode::serialize_into(&mut taxon_rank_fh, &data.2)
             .expect("Unable to write to bincode file");
+
+        println!("Finished... Flushing and compacting database...");
+        a2tdb.flush().expect("Unable to flush");
+        a2tdb.compact_range(None::<&[u8]>, None::<&[u8]>);
     }
+
+    let a2tdb = Arc::new(DB::open(&rockoptions, "acc2tax.db").expect("Unable to open database path, delete existing acc2tax.db and re-initialize"));
 
     names = data.0;
     taxon_to_parent = data.1;
@@ -262,8 +270,8 @@ fn get_child_taxons(parent_taxon: usize) -> Vec<usize> {
 
     let taxon_to_parent = TAXON2PARENT.get().expect("Data not initialized!");
 
-    for x in 0..(taxon_to_parent.len()) {
-        if taxon_to_parent[x] == parent_taxon {
+    for (x, item) in taxon_to_parent.iter().enumerate() {
+        if *item == parent_taxon {
             child_taxons.push(x)
         }
     }

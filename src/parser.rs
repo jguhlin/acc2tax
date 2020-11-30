@@ -1,12 +1,11 @@
 use super::*;
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
-use sled;
-use sled::Batch;
 use std::sync::Arc;
 
-use byteorder::BigEndian;
-use zerocopy::{byteorder::U64, AsBytes, FromBytes, LayoutVerified, Unaligned, U16, U32};
+use zerocopy::{AsBytes, U32};
+
+use rocksdb::{DB, WriteBatch};
 
 enum ThreadCommand<T> {
     Work(T),
@@ -23,9 +22,9 @@ impl ThreadCommand<Vec<Vec<u8>>> {
     }
 }
 
-const SHORT_LENGTH: usize = 8;
+// const SHORT_LENGTH: usize = 8;
 
-pub fn shorten(acc: &str) -> String {
+/* pub fn shorten(acc: &str) -> String {
     let length = acc.len();
     let max = if length < SHORT_LENGTH {
         length
@@ -34,7 +33,7 @@ pub fn shorten(acc: &str) -> String {
     };
 
     acc[..max].to_string()
-}
+} */
 
 fn parse_line(line: &[u8]) -> Result {
     let data = unsafe {
@@ -53,7 +52,7 @@ fn parse_line(line: &[u8]) -> Result {
 
 pub fn read_taxonomy(
     num_threads: usize,
-    a2tdb: Arc<sled::Db>,
+    a2tdb: Arc<DB>,
     acc2tax_filename: String,
     nodes_filename: String,
     names_filename: String,
@@ -91,7 +90,7 @@ pub fn read_taxonomy(
     let mut children = Vec::new();
     let queue = Arc::new(ArrayQueue::<ThreadCommand<Vec<Vec<u8>>>>::new(2048));
 
-    let jobs = Arc::new(AtomicCell::new(0 as usize));
+    let jobs = Arc::new(AtomicCell::new(0));
 
     for _ in 0..num_threads {
         let queue = Arc::clone(&queue);
@@ -148,7 +147,7 @@ pub fn read_taxonomy(
     for _ in 0..num_threads {
         match queue.push(ThreadCommand::Terminate) {
             Ok(_) => (),
-            Err(x) => panic!("Unable to send command..."),
+            Err(_x) => panic!("Unable to send command..."),
         }
     }
 
@@ -172,7 +171,7 @@ pub fn read_taxonomy(
 
 fn _worker_thread(
     queue: Arc<ArrayQueue<ThreadCommand<Vec<Vec<u8>>>>>,
-    a2tdb: Arc<sled::Db>,
+    a2tdb: Arc<DB>,
     jobs: Arc<AtomicCell<usize>>,
 ) {
     let backoff = Backoff::new();
@@ -190,14 +189,13 @@ fn _worker_thread(
                 .map(|x| parse_line(&x))
                 .collect::<Vec<Result>>();
 
-            let mut batch = Batch::default();
+            let mut batch = WriteBatch::default();
+
             for (x, y) in result {
-                batch.insert(x.as_bytes(), y.as_bytes());
+                batch.put(x.as_bytes(), y.as_bytes());
             }
 
-            a2tdb
-                .apply_batch(batch)
-                .expect("Unable to apply batch transaction");
+            a2tdb.write(batch).expect("Unable to write batch");
 
             jobs.fetch_sub(1);
         } else {

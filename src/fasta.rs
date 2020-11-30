@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use crate::parser;
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use crossbeam::queue::{ArrayQueue, PushError};
 use crossbeam::utils::Backoff;
@@ -25,9 +25,9 @@ use rand::prelude::*;
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
 
-use super::{get_taxon, get_complete_taxonomy};
-
 use serde::{Serialize, Deserialize};
+
+use super::{get_taxon, get_complete_taxonomy};
 
 #[derive(PartialEq)]
 pub enum ThreadCommand<T> {
