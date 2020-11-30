@@ -283,9 +283,6 @@ mod tests {
         let line: Vec<u8> = "X59856  X59856.2        9913    109659794"
             .as_bytes()
             .to_vec();
-        assert_eq!(
-            parse_line(&line),
-            ("X59856".to_string(), "X59856.2".to_string(), 9913)
-        );
+        assert_eq!(parse_line(&line), ("X59856.2".to_string(), 9913));
     }
 }

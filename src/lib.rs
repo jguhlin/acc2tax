@@ -183,7 +183,16 @@ pub fn init(
     let (data, names, taxon_to_parent, taxon_rank);
     // let mut new = false;
 
-    let a2tdb: Arc<sled::Db> = Arc::new(sled::open("acc2tax.db").expect("Unable to open database path, delete existing acc2tax.db and re-initialize. Check for free space on device."));
+    let sledconfig = sled::Config::default()
+        .path("acc2tax.db".to_owned())
+        .cache_capacity(1024 * 1024)
+        // .use_compression(true)
+        .mode(sled::Mode::HighThroughput);
+
+        // .compression_factor(9);
+    let a2tdb = Arc::new(sledconfig.open().expect("Unable to open database path, delete existing acc2tax.db and re-initialize. Check for free space on device."));
+
+    // let a2tdb: Arc<sled::Db> = Arc::new(sled::open("acc2tax.db").expect("Unable to open database path, delete existing acc2tax.db and re-initialize. Check for free space on device."));
 
     // if Path::new("taxon_rank.bc").exists() {
     if a2tdb.len() > 0 {
