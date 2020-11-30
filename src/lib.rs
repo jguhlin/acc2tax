@@ -270,7 +270,7 @@ fn get_parent_taxons(taxon: usize) -> Vec<usize> {
     let taxon_to_parent = TAXON2PARENT.get().expect("Data not initialized!");
 
     let mut cur_tax_id = taxon;
-    while taxon > 0 {
+    while cur_tax_id > 0 {
         cur_tax_id = taxon_to_parent[cur_tax_id];
         parent_taxons.push(cur_tax_id);
     }

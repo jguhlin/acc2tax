@@ -129,6 +129,7 @@ pub fn read_taxonomy(
         let mut result = queue.push(wp);
 
         while let Err(wp) = result {
+            backoff.snooze();
             result = queue.push(wp);
         }
     }
