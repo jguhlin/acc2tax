@@ -1,18 +1,12 @@
+use super::*;
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
-use std::sync::Arc;
-use super::*;
 use sled;
 use sled::Batch;
+use std::sync::Arc;
 
-use byteorder::{BigEndian};
-use zerocopy::{byteorder::U64, 
-                AsBytes, 
-                FromBytes, 
-                LayoutVerified, 
-                Unaligned, 
-                U16, 
-                U32,};
+use byteorder::BigEndian;
+use zerocopy::{byteorder::U64, AsBytes, FromBytes, LayoutVerified, Unaligned, U16, U32};
 
 enum ThreadCommand<T> {
     Work(T),
@@ -23,7 +17,7 @@ impl ThreadCommand<Vec<Vec<u8>>> {
     // Consumes the ThreadCommand, which is just fine...
     fn unwrap(self) -> Vec<Vec<u8>> {
         match self {
-            ThreadCommand::Work(x)   => x,
+            ThreadCommand::Work(x) => x,
             ThreadCommand::Terminate => panic!("Unable to unwrap terminate command"),
         }
     }
@@ -34,17 +28,21 @@ const SHORT_LENGTH: usize = 8;
 pub fn shorten(acc: &str) -> String {
     let length = acc.len();
     let max = if length < SHORT_LENGTH {
-                    length
-                } else {
-                    SHORT_LENGTH
-                };
-        
+        length
+    } else {
+        SHORT_LENGTH
+    };
+
     acc[..max].to_string()
 }
 
 fn parse_line(line: &[u8]) -> Result {
-    let data = unsafe { 
-        std::str::from_utf8_unchecked(line).split_ascii_whitespace().skip(1).take(2).collect::<Vec<&str>>()
+    let data = unsafe {
+        std::str::from_utf8_unchecked(line)
+            .split_ascii_whitespace()
+            .skip(1)
+            .take(2)
+            .collect::<Vec<&str>>()
     };
     let taxon = data[1].parse::<u32>().unwrap();
     // let acc: Vec<u8> = data[0].as_bytes().to_vec();
@@ -54,33 +52,36 @@ fn parse_line(line: &[u8]) -> Result {
 }
 
 pub fn read_taxonomy(
-        num_threads: usize, 
-        a2tdb: Arc<sled::Db>,
-        acc2tax_filename: String, 
-        nodes_filename: String, 
-        names_filename: String) -> 
-    (Vec<String>, Vec<usize>, Vec<String>) {
-
+    num_threads: usize,
+    a2tdb: Arc<sled::Db>,
+    acc2tax_filename: String,
+    nodes_filename: String,
+    names_filename: String,
+) -> (Vec<String>, Vec<usize>, Vec<String>) {
     let names_child = match Builder::new()
-                        .name("ParseNames".into())
-                        .spawn(move || parse_names(names_filename)) {
-                            Ok(x) => x,
-                            Err(y) => panic!("{}", y)
-                        };
+        .name("ParseNames".into())
+        .spawn(move || parse_names(names_filename))
+    {
+        Ok(x) => x,
+        Err(y) => panic!("{}", y),
+    };
 
     let nodes_child = match Builder::new()
-                        .name("ParseNodes".into())
-                        .spawn(move || parse_nodes(nodes_filename)) {
-                            Ok(x) => x,
-                            Err(y) => panic!("{}", y)
-                        };
+        .name("ParseNodes".into())
+        .spawn(move || parse_nodes(nodes_filename))
+    {
+        Ok(x) => x,
+        Err(y) => panic!("{}", y),
+    };
 
     let gb2accession_fh = File::open(acc2tax_filename).unwrap();
 
     let pb = ProgressBar::new(gb2accession_fh.metadata().unwrap().len());
-    pb.set_style(ProgressStyle::default_bar()
-        .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {eta} {msg}")
-        .progress_chars("█▇▆▅▄▃▂▁  "));
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {eta} {msg}")
+            .progress_chars("█▇▆▅▄▃▂▁  "),
+    );
 
     let gb2accession_fh = BufReader::with_capacity(64 * 1024 * 1024, pb.wrap_read(gb2accession_fh));
     let gb2accession = flate2::read::GzDecoder::new(gb2accession_fh);
@@ -98,11 +99,12 @@ pub fn read_taxonomy(
         let a2tdb = Arc::clone(&a2tdb);
 
         let child = match Builder::new()
-                        .name("TaxonReader".into())
-                        .spawn(move || _worker_thread(queue, a2tdb, jobs)) {
-                            Ok(x) => x,
-                            Err(y) => panic!("{}", y)
-                        };
+            .name("TaxonReader".into())
+            .spawn(move || _worker_thread(queue, a2tdb, jobs))
+        {
+            Ok(x) => x,
+            Err(y) => panic!("{}", y),
+        };
         children.push(child);
     }
 
@@ -110,7 +112,13 @@ pub fn read_taxonomy(
 
     let mut lines = 0;
 
-    for chunk in gb2accession.byte_lines().into_iter().skip(1).chunks(8192).into_iter() {
+    for chunk in gb2accession
+        .byte_lines()
+        .into_iter()
+        .skip(1)
+        .chunks(8192)
+        .into_iter()
+    {
         let work = chunk.map(|x| x.unwrap()).collect::<Vec<Vec<u8>>>();
 
         lines += work.len();
@@ -120,7 +128,7 @@ pub fn read_taxonomy(
         let wp = ThreadCommand::Work(work);
         let mut result = queue.push(wp);
 
-        while let Err(PushError(wp)) = result {
+        while let Err(wp) = result {
             result = queue.push(wp);
         }
     }
@@ -139,7 +147,7 @@ pub fn read_taxonomy(
     for _ in 0..num_threads {
         match queue.push(ThreadCommand::Terminate) {
             Ok(_) => (),
-            Err(x) => panic!("Unable to send command... {:#?}", x)
+            Err(x) => panic!("Unable to send command..."),
         }
     }
 
@@ -149,40 +157,46 @@ pub fn read_taxonomy(
         child.join().expect("Unable to  join child thread");
     }
 
-    let names = names_child.join().expect("Unable to join taxonomy names thread");
-    let (taxon_to_parent, taxon_rank) = nodes_child.join().expect("Unable to join taxonomy nodes thread");
+    let names = names_child
+        .join()
+        .expect("Unable to join taxonomy names thread");
+    let (taxon_to_parent, taxon_rank) = nodes_child
+        .join()
+        .expect("Unable to join taxonomy nodes thread");
 
     pb.finish_with_message("Complete");
 
     (names, taxon_to_parent, taxon_rank)
 }
 
-fn _worker_thread(queue: Arc<ArrayQueue<ThreadCommand<Vec<Vec<u8>>>>>, 
-                  a2tdb: Arc<sled::Db>,
-                  jobs: Arc<AtomicCell<usize>>) {
-
+fn _worker_thread(
+    queue: Arc<ArrayQueue<ThreadCommand<Vec<Vec<u8>>>>>,
+    a2tdb: Arc<sled::Db>,
+    jobs: Arc<AtomicCell<usize>>,
+) {
     let backoff = Backoff::new();
 
     loop {
-
-        if let Ok(command) = queue.pop() {
-
+        if let Some(command) = queue.pop() {
             if let ThreadCommand::Terminate = command {
                 break;
             }
 
             let lines = command.unwrap();
 
-            let result = lines.into_iter()
-                    .map(|x| parse_line(&x))
-                    .collect::<Vec<Result>>();
+            let result = lines
+                .into_iter()
+                .map(|x| parse_line(&x))
+                .collect::<Vec<Result>>();
 
             let mut batch = Batch::default();
             for (x, y) in result {
                 batch.insert(x.as_bytes(), y.as_bytes());
             }
 
-            a2tdb.apply_batch(batch).expect("Unable to apply batch transaction");
+            a2tdb
+                .apply_batch(batch)
+                .expect("Unable to apply batch transaction");
 
             jobs.fetch_sub(1);
         } else {
@@ -199,7 +213,11 @@ pub fn parse_names(filename: String) -> Vec<String> {
     let lines = reader.lines();
 
     for line in lines {
-        let split = line.expect("Error reading line").split('|').map(|x| x.trim().to_string()).collect::<Vec<String>>();
+        let split = line
+            .expect("Error reading line")
+            .split('|')
+            .map(|x| x.trim().to_string())
+            .collect::<Vec<String>>();
 
         let id: usize = split[0].parse().expect("Error converting to number");
         let name: &str = &split[1];
@@ -209,12 +227,12 @@ pub fn parse_names(filename: String) -> Vec<String> {
             None => {
                 names.resize(id + 1, "".to_string());
                 names[id] = name.into();
-            },
-            Some(_)  => {
+            }
+            Some(_) => {
                 if class == "scientific name" {
                     names[id] = name.into();
                 }
-            },
+            }
         };
     }
     names
@@ -229,7 +247,11 @@ pub fn parse_nodes(filename: String) -> (Vec<usize>, Vec<String>) {
     let lines = reader.lines();
 
     for line in lines {
-        let split = line.expect("Error reading line").split('|').map(|x| x.trim().to_string()).collect::<Vec<String>>();
+        let split = line
+            .expect("Error reading line")
+            .split('|')
+            .map(|x| x.trim().to_string())
+            .collect::<Vec<String>>();
 
         let tax_id: usize = split[0].parse().expect("Error converting to number");
         let parent_id: usize = split[1].parse().expect("Error converting to number");
@@ -242,7 +264,6 @@ pub fn parse_nodes(filename: String) -> (Vec<usize>, Vec<String>) {
 
         taxon_to_parent[tax_id] = parent_id;
         taxon_rank[tax_id] = rank.into();
-
     }
 
     taxon_to_parent.shrink_to_fit();
@@ -258,10 +279,12 @@ mod tests {
 
     #[test]
     fn test_parse_line() {
-        let line: Vec<u8> = "X59856  X59856.2        9913    109659794".as_bytes().to_vec();
+        let line: Vec<u8> = "X59856  X59856.2        9913    109659794"
+            .as_bytes()
+            .to_vec();
         assert_eq!(
-            parse_line(&line), 
-            ("X59856".to_string(), "X59856.2".to_string(), 9913));
+            parse_line(&line),
+            ("X59856".to_string(), "X59856.2".to_string(), 9913)
+        );
     }
-
 }
