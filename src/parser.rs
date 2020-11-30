@@ -89,7 +89,7 @@ pub fn read_taxonomy(
     let backoff = Backoff::new();
 
     let mut children = Vec::new();
-    let queue = Arc::new(ArrayQueue::<ThreadCommand<Vec<Vec<u8>>>>::new(8192));
+    let queue = Arc::new(ArrayQueue::<ThreadCommand<Vec<Vec<u8>>>>::new(2048));
 
     let jobs = Arc::new(AtomicCell::new(0 as usize));
 
