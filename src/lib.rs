@@ -185,7 +185,8 @@ pub fn init(
 
     let a2tdb: Arc<sled::Db> = Arc::new(sled::open("acc2tax.db").expect("Unable to open database path, delete existing acc2tax.db and re-initialize. Check for free space on device."));
 
-    if Path::new("taxon_rank.bc").exists() {
+    // if Path::new("taxon_rank.bc").exists() {
+    if a2tdb.len() > 0 {
         data = load_existing();
     } else {
         println!("Binary files do not exist, generating... This can take up to 60 minutes the first time...");
