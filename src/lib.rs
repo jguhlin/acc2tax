@@ -291,6 +291,9 @@ fn get_parent_taxons(taxon: usize) -> Vec<usize> {
     while cur_tax_id > 0 {
         cur_tax_id = taxon_to_parent[cur_tax_id];
         parent_taxons.push(cur_tax_id);
+        if cur_tax_id == 1 {
+            break;
+        }
     }
 
     parent_taxons.shrink_to_fit();
