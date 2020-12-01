@@ -355,8 +355,14 @@ fn get_taxon_name(taxon: usize) -> String {
         .to_string()
 }
 
+#[pyfunction]
+fn get_all_taxids() -> Vec<u32> {
+    return TAXIDS.get().expect("Taxids not initialized").to_vec()
+}
+
 #[pymodule]
 fn acc2tax(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_wrapped(wrap_pyfunction!(get_all_taxids))?;
     m.add_wrapped(wrap_pyfunction!(init))?;
     m.add_wrapped(wrap_pyfunction!(get_taxons_count))?;
     m.add_wrapped(wrap_pyfunction!(get_taxon))?;
