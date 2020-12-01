@@ -56,6 +56,7 @@ static NAMES: OnceCell<Vec<String>> = OnceCell::new();
 static TAXON2PARENT: OnceCell<Vec<usize>> = OnceCell::new();
 static TAXON_RANK: OnceCell<Vec<String>> = OnceCell::new();
 static ACC2TAX: OnceCell<Arc<DB>> = OnceCell::new();
+static TAXIDS: OnceCell<Vec<u32>> = OnceCell::new();
 
 // TODO: Update this and fasta annotator stuff...
 /*fn load_taxon(filename: &str) -> Option<Acc2TaxInner> {
@@ -86,10 +87,14 @@ pub fn get_taxon(accession: String) -> u32 {
     }
 }
 
-fn load_existing() -> (Vec<String>, Vec<usize>, Vec<String>) {
+fn load_existing() -> ((Vec<String>, Vec<u32>), Vec<usize>, Vec<String>) {
     let names_fh = BufReader::with_capacity(64 * 1024 * 1024, File::open("names.bc").unwrap());
     let names = bincode::deserialize_from(snap::read::FrameDecoder::new(names_fh))
         .expect("Unable to read file...");
+
+    let taxids_fh = BufReader::with_capacity(64 * 1024 * 1024, File::open("taxids.bc").unwrap());
+    let taxids = bincode::deserialize_from(snap::read::FrameDecoder::new(taxids_fh))
+            .expect("Unable to read file...");
 
     let t2p_fh = BufReader::with_capacity(64 * 1024 * 1024, File::open("t2p.bc").unwrap());
     let taxon_to_parent = bincode::deserialize_from(snap::read::FrameDecoder::new(t2p_fh))
@@ -100,7 +105,7 @@ fn load_existing() -> (Vec<String>, Vec<usize>, Vec<String>) {
     let taxon_rank = bincode::deserialize_from(snap::read::FrameDecoder::new(taxon_rank_fh))
         .expect("Unable to read file...");
 
-    (names, taxon_to_parent, taxon_rank)
+    ((names, taxids), taxon_to_parent, taxon_rank)
 }
 
 #[pyfunction]
@@ -178,7 +183,7 @@ pub fn init(
 ) {
     if TAXON_RANK.get().is_some() { return }
 
-    let (data, names, taxon_to_parent, taxon_rank);
+    let (data, names, taxon_to_parent, taxon_rank, taxids);
     // let mut new = false;
 
     let mut rockoptions = Options::default();
@@ -218,7 +223,10 @@ pub fn init(
         // serde_json::to_writer(acc2tax_fh, &acc2tax).expect("Unable to write JSON file...");
 
         let mut names_fh = snap::write::FrameEncoder::new(File::create("names.bc").unwrap());
-        bincode::serialize_into(&mut names_fh, &data.0).expect("Unable to write to bincode file");
+        bincode::serialize_into(&mut names_fh, &data.0.0).expect("Unable to write to bincode file");
+
+        let mut taxids_fh = snap::write::FrameEncoder::new(File::create("taxids.bc").unwrap());
+        bincode::serialize_into(&mut taxids_fh, &data.0.0).expect("Unable to write to bincode file");
 
         println!("Processing taxon to parent file");
         let mut taxon_to_parent_fh =
@@ -239,12 +247,16 @@ pub fn init(
 
     let a2tdb = Arc::new(DB::open(&rockoptions, "acc2tax.db").expect("Unable to open database path, delete existing acc2tax.db and re-initialize"));
 
-    names = data.0;
+    names = data.0.0;
+    taxids = data.0.1;
     taxon_to_parent = data.1;
     taxon_rank = data.2;
 
     NAMES
         .set(names)
+        .expect("Unable to set. Already initialized?");
+    TAXIDS
+        .set(taxids)
         .expect("Unable to set. Already initialized?");
     TAXON2PARENT
         .set(taxon_to_parent)
@@ -252,10 +264,10 @@ pub fn init(
     TAXON_RANK
         .set(taxon_rank)
         .expect("Unable to set. Already initialized?");
-
     ACC2TAX
         .set(a2tdb)
         .expect("Unable to set. Already initialized?");
+
     println!("Loaded taxonomy databases");
 }
 

@@ -4,8 +4,8 @@ use indicatif::ProgressStyle;
 use std::sync::Arc;
 
 use zerocopy::{AsBytes, U32};
-
 use rocksdb::{DB, WriteBatch};
+use hashbrown::HashSet;
 
 enum ThreadCommand<T> {
     Work(T),
@@ -56,7 +56,7 @@ pub fn read_taxonomy(
     acc2tax_filename: String,
     nodes_filename: String,
     names_filename: String,
-) -> (Vec<String>, Vec<usize>, Vec<String>) {
+) -> ((Vec<String>, Vec<u32>), Vec<usize>, Vec<String>) {
     let names_child = match Builder::new()
         .name("ParseNames".into())
         .spawn(move || parse_names(names_filename))
@@ -204,12 +204,13 @@ fn _worker_thread(
     }
 }
 
-pub fn parse_names(filename: String) -> Vec<String> {
+pub fn parse_names(filename: String) -> (Vec<String>, Vec<u32>) {
     let mut names: Vec<String> = Vec::with_capacity(3_006_098);
 
     let reader = BufReader::new(File::open(filename).expect("Unable to open taxonomy names file"));
 
     let lines = reader.lines();
+    let mut taxids = HashSet::new();
 
     for line in lines {
         let split = line
@@ -226,6 +227,7 @@ pub fn parse_names(filename: String) -> Vec<String> {
             None => {
                 names.resize(id + 1, "".to_string());
                 names[id] = name.into();
+                taxids.insert(id as u32);
             }
             Some(_) => {
                 if class == "scientific name" {
@@ -234,7 +236,11 @@ pub fn parse_names(filename: String) -> Vec<String> {
             }
         };
     }
-    names
+
+    let mut taxids = taxids.into_iter().collect::<Vec<u32>>();
+    taxids.sort_unstable();
+
+    (names, taxids)
 }
 
 pub fn parse_nodes(filename: String) -> (Vec<usize>, Vec<String>) {
