@@ -56,7 +56,7 @@ pub fn read_taxonomy(
     acc2tax_filename: String,
     nodes_filename: String,
     names_filename: String,
-) -> ((Vec<String>, Vec<u32>), Vec<usize>, Vec<String>) {
+) -> (Vec<String>, Vec<u32>, Vec<usize>, Vec<String>) {
     let names_child = match Builder::new()
         .name("ParseNames".into())
         .spawn(move || parse_names(names_filename))
@@ -166,7 +166,7 @@ pub fn read_taxonomy(
 
     pb.finish_with_message("Complete");
 
-    (names, taxon_to_parent, taxon_rank)
+    (names.0, names.1, taxon_to_parent, taxon_rank)
 }
 
 fn _worker_thread(

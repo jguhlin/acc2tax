@@ -87,25 +87,25 @@ pub fn get_taxon(accession: String) -> u32 {
     }
 }
 
-fn load_existing() -> ((Vec<String>, Vec<u32>), Vec<usize>, Vec<String>) {
-    let names_fh = BufReader::with_capacity(64 * 1024 * 1024, File::open("names.bc").unwrap());
+fn load_existing() -> (Vec<String>, Vec<u32>, Vec<usize>, Vec<String>) {
+    let names_fh = BufReader::with_capacity(2 * 1024 * 1024, File::open("names.bc").unwrap());
     let names = bincode::deserialize_from(snap::read::FrameDecoder::new(names_fh))
         .expect("Unable to read file...");
 
-    let taxids_fh = BufReader::with_capacity(64 * 1024 * 1024, File::open("taxids.bc").unwrap());
+    let taxids_fh = BufReader::with_capacity(2 * 1024 * 1024, File::open("taxids.bc").unwrap());
     let taxids = bincode::deserialize_from(snap::read::FrameDecoder::new(taxids_fh))
             .expect("Unable to read file...");
 
-    let t2p_fh = BufReader::with_capacity(64 * 1024 * 1024, File::open("t2p.bc").unwrap());
+    let t2p_fh = BufReader::with_capacity(2 * 1024 * 1024, File::open("t2p.bc").unwrap());
     let taxon_to_parent = bincode::deserialize_from(snap::read::FrameDecoder::new(t2p_fh))
         .expect("Unable to read file...");
 
     let taxon_rank_fh =
-        BufReader::with_capacity(64 * 1024 * 1024, File::open("taxon_rank.bc").unwrap());
+        BufReader::with_capacity(2 * 1024 * 1024, File::open("taxon_rank.bc").unwrap());
     let taxon_rank = bincode::deserialize_from(snap::read::FrameDecoder::new(taxon_rank_fh))
         .expect("Unable to read file...");
 
-    ((names, taxids), taxon_to_parent, taxon_rank)
+    (names, taxids, taxon_to_parent, taxon_rank)
 }
 
 #[pyfunction]
@@ -205,7 +205,7 @@ pub fn init(
         writeoptions.prepare_for_bulk_load();
 
         let a2tdb = Arc::new(DB::open(&writeoptions, "acc2tax.db").expect("Unable to open db for writing"));
-        
+
         println!("Binary files do not exist, generating... This can take up to 60 minutes the first time...");
         println!("Processing acc2tax file");
         data = parser::read_taxonomy(
@@ -223,21 +223,21 @@ pub fn init(
         // serde_json::to_writer(acc2tax_fh, &acc2tax).expect("Unable to write JSON file...");
 
         let mut names_fh = snap::write::FrameEncoder::new(File::create("names.bc").unwrap());
-        bincode::serialize_into(&mut names_fh, &data.0.0).expect("Unable to write to bincode file");
+        bincode::serialize_into(&mut names_fh, &data.0).expect("Unable to write to bincode file");
 
         let mut taxids_fh = snap::write::FrameEncoder::new(File::create("taxids.bc").unwrap());
-        bincode::serialize_into(&mut taxids_fh, &data.0.0).expect("Unable to write to bincode file");
+        bincode::serialize_into(&mut taxids_fh, &data.1).expect("Unable to write to bincode file");
 
         println!("Processing taxon to parent file");
         let mut taxon_to_parent_fh =
             snap::write::FrameEncoder::new(File::create("t2p.bc").unwrap());
-        bincode::serialize_into(&mut taxon_to_parent_fh, &data.1)
+        bincode::serialize_into(&mut taxon_to_parent_fh, &data.2)
             .expect("Unable to write to bincode file");
 
         println!("Processing taxon rank file");
         let mut taxon_rank_fh =
             snap::write::FrameEncoder::new(File::create("taxon_rank.bc").unwrap());
-        bincode::serialize_into(&mut taxon_rank_fh, &data.2)
+        bincode::serialize_into(&mut taxon_rank_fh, &data.3)
             .expect("Unable to write to bincode file");
 
         println!("Finished... Flushing and compacting database...");
@@ -247,10 +247,10 @@ pub fn init(
 
     let a2tdb = Arc::new(DB::open(&rockoptions, "acc2tax.db").expect("Unable to open database path, delete existing acc2tax.db and re-initialize"));
 
-    names = data.0.0;
-    taxids = data.0.1;
-    taxon_to_parent = data.1;
-    taxon_rank = data.2;
+    names = data.0;
+    taxids = data.1;
+    taxon_to_parent = data.2;
+    taxon_rank = data.3;
 
     NAMES
         .set(names)
