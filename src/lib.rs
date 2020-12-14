@@ -280,20 +280,22 @@ fn get_taxons_count() -> usize {
 
 #[pyfunction]
 fn get_child_taxons(parent_taxon: usize) -> Vec<usize> {
-    let mut child_taxons: Vec<usize> = Vec::with_capacity(1000);
+    let mut child_taxons: Vec<usize>; // = Vec::with_capacity(1000);
 
     let taxon_to_parent = TAXON2PARENT.get().expect("Data not initialized!");
     
     // child_taxons = taxon_to_parent.into_par_iter().enumerate().filter(|(_i, x)| **x == parent_taxon).map(|(i, _x)| i).collect();
     // child_taxons.par_sort();
 
-    for (x, item) in taxon_to_parent.iter().enumerate() {
+    child_taxons = taxon_to_parent.iter().enumerate().filter(|(_i, x)| **x == parent_taxon).map(|(i, _x)| i).collect();
+
+/*    for (x, item) in taxon_to_parent.iter().enumerate() {
         if *item == parent_taxon {
             child_taxons.push(x)
         }
-    }
+    } */
 
-    child_taxons.shrink_to_fit();
+    // child_taxons.shrink_to_fit();
     child_taxons.sort_unstable();
     child_taxons
 }
