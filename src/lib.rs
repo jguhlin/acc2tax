@@ -11,16 +11,17 @@ extern crate snap;
 extern crate zerocopy;
 extern crate mimalloc;
 extern crate rocksdb;
-
-use rocksdb::{DB, Options};
-
-use mimalloc::MiMalloc;
-#[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
+extern crate rayon;
 
 use byteorder::BigEndian;
 use byteorder::ByteOrder;
 use zerocopy::{U32};
+use rocksdb::{DB, Options};
+use rayon::prelude::*;
+
+use mimalloc::MiMalloc;
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 mod parser;
 // mod fasta;
@@ -279,17 +280,21 @@ fn get_taxons_count() -> usize {
 
 #[pyfunction]
 fn get_child_taxons(parent_taxon: usize) -> Vec<usize> {
-    let mut child_taxons: Vec<usize> = Vec::with_capacity(1000);
+    let mut child_taxons: Vec<usize>;
 
     let taxon_to_parent = TAXON2PARENT.get().expect("Data not initialized!");
+    
+    child_taxons = taxon_to_parent.into_par_iter().enumerate().filter(|(_i, x)| **x == parent_taxon).map(|(i, _x)| i).collect();
+    child_taxons.par_sort();
 
-    for (x, item) in taxon_to_parent.iter().enumerate() {
+    /*
+    for (x, item) in taxon_to_parent.into_par_iter().enumerate() {
         if *item == parent_taxon {
             child_taxons.push(x)
         }
-    }
+    } */
 
-    child_taxons.shrink_to_fit();
+    // child_taxons.shrink_to_fit();
     child_taxons
 }
 
