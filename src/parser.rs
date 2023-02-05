@@ -1,11 +1,11 @@
 use super::*;
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
-use std::sync::Arc;
-
 use zerocopy::{AsBytes, U32};
 use rocksdb::{DB, WriteBatch};
-use hashbrown::HashSet;
+
+use std::collections::HashSet;
+
 
 enum ThreadCommand<T> {
     Work(T),
@@ -47,7 +47,7 @@ fn parse_line(line: &[u8]) -> Result {
     // let acc: Vec<u8> = data[0].as_bytes().to_vec();
     let acc: String = data[0].to_string();
 
-    (acc, U32::new(taxon))
+    (acc, U32::<BigEndian>::new(taxon).get())
 }
 
 pub fn read_taxonomy(
@@ -78,7 +78,7 @@ pub fn read_taxonomy(
     let pb = ProgressBar::new(gb2accession_fh.metadata().unwrap().len());
     pb.set_style(
         ProgressStyle::default_bar()
-            .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {eta} {msg}")
+            .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {eta} {msg}").expect("Unable to set progress bar style")
             .progress_chars("█▇▆▅▄▃▂▁  "),
     );
 
@@ -121,7 +121,7 @@ pub fn read_taxonomy(
         let work = chunk.map(|x| x.unwrap()).collect::<Vec<Vec<u8>>>();
 
         lines += work.len();
-        pb.set_message(&format!("{} lines", lines));
+        pb.set_message(format!("{} lines", lines));
 
         jobs.fetch_add(1);
         let wp = ThreadCommand::Work(work);
@@ -138,7 +138,7 @@ pub fn read_taxonomy(
     jobs.fetch_sub(1); // Merger thread extra...
 
     while jobs.load() > 0 {
-        pb.set_message(&format!("{} jobs remaining", jobs.load()));
+        pb.set_message(format!("{} jobs remaining", jobs.load()));
         backoff.snooze();
     }
 
@@ -287,6 +287,6 @@ mod tests {
         let line: Vec<u8> = "X59856  X59856.2        9913    109659794"
             .as_bytes()
             .to_vec();
-        assert_eq!(parse_line(&line), ("X59856.2".to_string(), 9913));
+        assert_eq!(parse_line(&line), ("X59856.2".to_string(), 9913_u32));
     }
 }

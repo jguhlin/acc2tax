@@ -11,33 +11,31 @@ name = "acc2tax"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-flate2 = { version = "1.0.14", features = ["zlib"], default-features = false }
-serde = { version = "1.0.118", features = ["derive"] }
-bincode = "1.3.1"
-itertools = "0.9.0"
-crossbeam = "0.8.0"
-once_cell = "1.5.2"
-bytelines = "2.2.2"
+flate2 = { version = "1.0.25", features = ["zlib"], default-features = false }
+serde = { version = "1.0.152", features = ["derive"] }
+bincode = "1.3.3"
+itertools = "0.10.5"
+crossbeam = "0.8.2"
+once_cell = "1.17.0"
+bytelines = "2.4.0"
 snap = "1"
 mimalloc = { version = "*", default-features = false }
-indicatif = "0.15.0"
+indicatif = "0.17.3"
 thincollections = "0.5.3"
-rand = "0.7.3"
-zerocopy = "0.3.0"
-rayon = "1.5.0"
-byteorder = "1.3.4"
-hashbrown = { version = "0.9.1", features = ["nightly", "serde"] }
-
+rand = "0.8.5"
+zerocopy = {version = "0.6.1", features = ["alloc", "simd"]}
+rayon = "1.6.1"
+byteorder = "1.4.3"
 # rayon = "1.5.0"
 # sled = { version = "0.34.6", features = ["zstd"] }
 
 
 [dependencies.pyo3]
-version = "0.12.4"
-features = ["extension-module", "hashbrown"]
+version = "0.18.0"
+features = ["extension-module"]
 
 [dependencies.rocksdb]
-version = "0.15.0"
+version = "0.19.0"
 default-features = false
 features = ["snappy"]
 

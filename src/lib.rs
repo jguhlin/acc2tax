@@ -26,13 +26,13 @@ static GLOBAL: MiMalloc = MiMalloc;
 mod parser;
 // mod fasta;
 
-use hashbrown::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::str;
 use std::sync::Arc;
 use std::thread::Builder;
+use std::collections::HashMap;
 
 use once_cell::sync::OnceCell;
 
@@ -51,7 +51,7 @@ use thincollections::thin_vec::ThinVec;
 
 pub type TaxonLevels2AccInner = HashMap<u32, Vec<ThinVec<u8>>>;
 pub type TaxonLevels2Acc = HashMap<u32, TaxonLevels2AccInner>;
-pub type Result = (String, U32<BigEndian>);
+pub type Result = (String, u32);
 
 static NAMES: OnceCell<Vec<String>> = OnceCell::new();
 static TAXON2PARENT: OnceCell<Vec<usize>> = OnceCell::new();
