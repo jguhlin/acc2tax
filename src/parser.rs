@@ -1,11 +1,10 @@
 use super::*;
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
+use rocksdb::{WriteBatch, DB};
 use zerocopy::{AsBytes, U32};
-use rocksdb::{DB, WriteBatch};
 
 use std::collections::HashSet;
-
 
 enum ThreadCommand<T> {
     Work(T),
@@ -78,7 +77,8 @@ pub fn read_taxonomy(
     let pb = ProgressBar::new(gb2accession_fh.metadata().unwrap().len());
     pb.set_style(
         ProgressStyle::default_bar()
-            .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {eta} {msg}").expect("Unable to set progress bar style")
+            .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {eta} {msg}")
+            .expect("Unable to set progress bar style")
             .progress_chars("█▇▆▅▄▃▂▁  "),
     );
 

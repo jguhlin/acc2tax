@@ -1,38 +1,20 @@
-#![feature(shrink_to)]
-
-extern crate bincode;
-extern crate flate2;
-extern crate itertools;
-extern crate bytelines;
-extern crate byteorder;
-extern crate rand;
-extern crate serde;
-extern crate snap;
-extern crate zerocopy;
-extern crate mimalloc;
-extern crate rocksdb;
-extern crate rayon;
-
-use byteorder::BigEndian;
+use byteorder::{BigEndian, LittleEndian};
 use byteorder::ByteOrder;
-use zerocopy::{U32};
-use rocksdb::{DB, Options};
-use rayon::prelude::*;
+use rocksdb::{Options, DB};
 
 use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
 mod parser;
-// mod fasta;
 
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::str;
 use std::sync::Arc;
 use std::thread::Builder;
-use std::collections::HashMap;
 
 use once_cell::sync::OnceCell;
 
@@ -59,17 +41,6 @@ static TAXON_RANK: OnceCell<Vec<String>> = OnceCell::new();
 static ACC2TAX: OnceCell<Arc<DB>> = OnceCell::new();
 static TAXIDS: OnceCell<Vec<u32>> = OnceCell::new();
 
-// TODO: Update this and fasta annotator stuff...
-/*fn load_taxon(filename: &str) -> Option<Acc2TaxInner> {
-    let file = match File::open(filename) {
-        Ok(file) => file,
-        Err(_x)   => return None
-    };
-
-    let fh = BufReader::with_capacity(256 * 1024, file);
-    Some(bincode::deserialize_from(snap::read::FrameDecoder::new(fh)).expect("Unable to read file..."))
-}*/
-
 #[pyfunction]
 pub fn get_taxon(accession: String) -> u32 {
     let accession = accession
@@ -84,33 +55,37 @@ pub fn get_taxon(accession: String) -> u32 {
 
     match x {
         None => 0,
-        Some(x) => BigEndian::read_u32(&x),
+        Some(x) => LittleEndian::read_u32(&x),
     }
 }
 
 fn load_existing() -> (Vec<String>, Vec<u32>, Vec<usize>, Vec<String>) {
     let names_fh = BufReader::with_capacity(2 * 1024 * 1024, File::open("names.bc").unwrap());
-    let names = bincode::deserialize_from(snap::read::FrameDecoder::new(names_fh))
-        .expect("Unable to read file...");
+    let bincoded: Vec<u8> = bincode::deserialize_from(names_fh).expect("unable to read names.bc");
+    let decompressed = zstd::stream::decode_all(&bincoded[..]).expect("unable to read names.bc");
+    let names: Vec<String>  = bincode::deserialize_from(&decompressed[..]).expect("Unable to read file...");
 
     let taxids_fh = BufReader::with_capacity(2 * 1024 * 1024, File::open("taxids.bc").unwrap());
-    let taxids = bincode::deserialize_from(snap::read::FrameDecoder::new(taxids_fh))
-            .expect("Unable to read file...");
+    let bincoded: Vec<u8> = bincode::deserialize_from(taxids_fh).expect("unable to read taxids.bc");
+    let decompressed = zstd::stream::decode_all(&bincoded[..]).expect("unable to read taxids.bc");
+    let taxids: Vec<u32>  = bincode::deserialize_from(&decompressed[..]).expect("Unable to read file...");
 
     let t2p_fh = BufReader::with_capacity(2 * 1024 * 1024, File::open("t2p.bc").unwrap());
-    let taxon_to_parent = bincode::deserialize_from(snap::read::FrameDecoder::new(t2p_fh))
-        .expect("Unable to read file...");
+    let bincoded: Vec<u8> = bincode::deserialize_from(t2p_fh).expect("unable to read t2p.bc");
+    let decompressed = zstd::stream::decode_all(&bincoded[..]).expect("unable to read t2p.bc");
+    let taxon_to_parent: Vec<usize>  = bincode::deserialize_from(&decompressed[..]).expect("Unable to read file...");
 
     let taxon_rank_fh =
         BufReader::with_capacity(2 * 1024 * 1024, File::open("taxon_rank.bc").unwrap());
-    let taxon_rank = bincode::deserialize_from(snap::read::FrameDecoder::new(taxon_rank_fh))
-        .expect("Unable to read file...");
+    let bincoded: Vec<u8> = bincode::deserialize_from(taxon_rank_fh).expect("unable to read taxon_rank.bc");
+    let decompressed = zstd::stream::decode_all(&bincoded[..]).expect("unable to read taxon_rank.bc");
+    let taxon_rank: Vec<String>  = bincode::deserialize_from(&decompressed[..]).expect("Unable to read file...");
 
     (names, taxids, taxon_to_parent, taxon_rank)
 }
 
 #[pyfunction]
-fn get_complete_taxonomy(taxon: usize) -> Vec<usize> {
+pub fn get_complete_taxonomy(taxon: usize) -> Vec<usize> {
     let mut complete_taxon: Vec<usize> = Vec::with_capacity(20);
 
     let mut cur_taxon = taxon;
@@ -182,30 +157,28 @@ pub fn init(
     nodes_filename: String,
     names_filename: String,
 ) {
-    if TAXON_RANK.get().is_some() { return }
+    if TAXON_RANK.get().is_some() {
+        return;
+    }
 
     let (data, names, taxon_to_parent, taxon_rank, taxids);
-    // let mut new = false;
 
     let mut rockoptions = Options::default();
     rockoptions.increase_parallelism(num_threads as i32);
     rockoptions.set_level_compaction_dynamic_level_bytes(true);
-    rockoptions.set_compaction_readahead_size(8 * 1024 * 1024);
-    
+
     // let a2tdb = Arc::new(sledconfig.open().expect("Unable to open database path, delete existing acc2tax.db and re-initialize. Check for free space on device."));
     // let a2tdb: Arc<sled::Db> = Arc::new(sled::open("acc2tax.db").expect("Unable to open database path, delete existing acc2tax.db and re-initialize. Check for free space on device."));
     if Path::new("taxon_rank.bc").exists() {
-    // if a2tdb.len() > 0 {
+        // if a2tdb.len() > 0 {
         data = load_existing();
     } else {
         let mut writeoptions = rockoptions.clone();
         writeoptions.create_if_missing(true);
-        writeoptions.set_bytes_per_sync(8 * 1024 * 1024);
-        writeoptions.set_db_write_buffer_size(128 * 1024 * 1024);
-        writeoptions.set_write_buffer_size(256 * 1024 * 1024);
         writeoptions.prepare_for_bulk_load();
 
-        let a2tdb = Arc::new(DB::open(&writeoptions, "acc2tax.db").expect("Unable to open db for writing"));
+        let a2tdb =
+            Arc::new(DB::open(&writeoptions, "acc2tax.db").expect("Unable to open db for writing"));
 
         println!("Binary files do not exist, generating... This can take up to 60 minutes the first time...");
         println!("Processing acc2tax file");
@@ -219,34 +192,41 @@ pub fn init(
 
         println!("Processing names file");
 
-        // let mut acc2tax_fh = snap::Writer::new(File::create("acc2tax.bc").unwrap());
-        // bincode::serialize_into(&mut acc2tax_fh, &data.0).expect("Unable to write to bincode file");
-        // serde_json::to_writer(acc2tax_fh, &acc2tax).expect("Unable to write JSON file...");
+        let mut names_fh = File::create("names.bc").unwrap();
+        let bincoded = bincode::serialize(&data.0).expect("Unable to write to bincode file");
+        let compressed = zstd::encode_all(&bincoded[..], -3).expect("Unable to compress");
+        bincode::serialize_into(&mut names_fh, &compressed).expect("Unable to write to bincode file");
+        drop(names_fh);
 
-        let mut names_fh = snap::write::FrameEncoder::new(File::create("names.bc").unwrap());
-        bincode::serialize_into(&mut names_fh, &data.0).expect("Unable to write to bincode file");
-
-        let mut taxids_fh = snap::write::FrameEncoder::new(File::create("taxids.bc").unwrap());
-        bincode::serialize_into(&mut taxids_fh, &data.1).expect("Unable to write to bincode file");
-
+        let mut taxids_fh = File::create("taxids.bc").unwrap();
+        let bincoded = bincode::serialize(&data.1).expect("Unable to write to bincode file");
+        let compressed = zstd::encode_all(&bincoded[..], -3).expect("Unable to compress");
+        bincode::serialize_into(&mut taxids_fh, &compressed).expect("Unable to write to bincode file");
+        drop(taxids_fh);
+        
         println!("Processing taxon to parent file");
-        let mut taxon_to_parent_fh =
-            snap::write::FrameEncoder::new(File::create("t2p.bc").unwrap());
-        bincode::serialize_into(&mut taxon_to_parent_fh, &data.2)
-            .expect("Unable to write to bincode file");
+        let mut taxon_to_parent_fh = File::create("t2p.bc").unwrap();
+        let bincoded = bincode::serialize(&data.2).expect("Unable to write to bincode file");
+        let compressed = zstd::encode_all(&bincoded[..], -3).expect("Unable to compress");
+        bincode::serialize_into(&mut taxon_to_parent_fh, &compressed).expect("Unable to write to bincode file");
+        drop(taxon_to_parent_fh);
 
         println!("Processing taxon rank file");
-        let mut taxon_rank_fh =
-            snap::write::FrameEncoder::new(File::create("taxon_rank.bc").unwrap());
-        bincode::serialize_into(&mut taxon_rank_fh, &data.3)
-            .expect("Unable to write to bincode file");
+        let mut taxon_rank_fh = File::create("taxon_rank.bc").unwrap();
+        let bincoded = bincode::serialize(&data.3).expect("Unable to write to bincode file");
+        let compressed = zstd::encode_all(&bincoded[..], -3).expect("Unable to compress");
+        bincode::serialize_into(&mut taxon_rank_fh, &compressed).expect("Unable to write to bincode file");
+        drop(taxon_rank_fh);
 
         println!("Finished... Flushing and compacting database...");
         a2tdb.flush().expect("Unable to flush");
         a2tdb.compact_range(None::<&[u8]>, None::<&[u8]>);
     }
 
-    let a2tdb = Arc::new(DB::open(&rockoptions, "acc2tax.db").expect("Unable to open database path, delete existing acc2tax.db and re-initialize"));
+    let a2tdb = Arc::new(
+        DB::open(&rockoptions, "acc2tax.db")
+            .expect("Unable to open database path, delete existing acc2tax.db and re-initialize"),
+    );
 
     names = data.0;
     taxids = data.1;
@@ -283,13 +263,18 @@ fn get_child_taxons(parent_taxon: usize) -> Vec<usize> {
     let mut child_taxons: Vec<usize>; // = Vec::with_capacity(1000);
 
     let taxon_to_parent = TAXON2PARENT.get().expect("Data not initialized!");
-    
+
     // child_taxons = taxon_to_parent.into_par_iter().enumerate().filter(|(_i, x)| **x == parent_taxon).map(|(i, _x)| i).collect();
     // child_taxons.par_sort();
 
-    child_taxons = taxon_to_parent.iter().enumerate().filter(|(_i, x)| **x == parent_taxon).map(|(i, _x)| i).collect();
+    child_taxons = taxon_to_parent
+        .iter()
+        .enumerate()
+        .filter(|(_i, x)| **x == parent_taxon)
+        .map(|(i, _x)| i)
+        .collect();
 
-/*    for (x, item) in taxon_to_parent.iter().enumerate() {
+    /*    for (x, item) in taxon_to_parent.iter().enumerate() {
         if *item == parent_taxon {
             child_taxons.push(x)
         }
@@ -348,9 +333,15 @@ fn get_child_taxons_names(parent_taxon: usize) -> Vec<(usize, String)> {
 }
 
 #[pyfunction]
-fn get_taxon_rank(taxon: usize) -> String {
+pub fn get_taxon_rank(taxon: usize) -> String {
     let taxon_rank = TAXON_RANK.get().expect("Taxon Rank not initialized");
     taxon_rank.get(taxon).unwrap().to_string()
+}
+
+#[pyfunction]
+pub fn get_taxon_ranks() -> Vec<String> {
+    let taxon_rank = TAXON_RANK.get().expect("Taxon Rank not initialized");
+    taxon_rank.into_iter().collect::<HashSet<&String>>().into_iter().map(|x| x.to_string()).collect()
 }
 
 #[pyfunction]
@@ -364,7 +355,7 @@ fn get_taxon_name(taxon: usize) -> String {
 
 #[pyfunction]
 fn get_all_taxids() -> Vec<u32> {
-    return TAXIDS.get().expect("Taxids not initialized").to_vec()
+    return TAXIDS.get().expect("Taxids not initialized").to_vec();
 }
 
 #[pymodule]
@@ -376,23 +367,13 @@ fn acc2tax(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_wrapped(wrap_pyfunction!(get_complete_taxonomy))?;
     m.add_wrapped(wrap_pyfunction!(get_complete_taxonomy_dict))?;
     m.add_wrapped(wrap_pyfunction!(get_complete_taxonomy_names_dict))?;
-    //m.add_wrapped(wrap_pyfunction!(convert_ntfasta_file))?;
-    //m.add_wrapped(wrap_pyfunction!(filter_annotated_file))?;
-    //m.add_wrapped(wrap_pyfunction!(filter_annotated_file_singlethreaded))?;
     m.add_wrapped(wrap_pyfunction!(get_parent_taxons))?;
     m.add_wrapped(wrap_pyfunction!(get_parent_taxons_names))?;
     m.add_wrapped(wrap_pyfunction!(get_child_taxons))?;
     m.add_wrapped(wrap_pyfunction!(get_child_taxons_names))?;
     m.add_wrapped(wrap_pyfunction!(get_taxon_rank))?;
+    m.add_wrapped(wrap_pyfunction!(get_taxon_ranks))?;
     m.add_wrapped(wrap_pyfunction!(get_taxon_name))?;
-    //m.add_wrapped(wrap_pyfunction!(child_taxon_seqlengths))?;
-    //m.add_wrapped(wrap_pyfunction!(split_train_test_validation))?;
-    //m.add_wrapped(wrap_pyfunction!(chunk_file))?;
-    //m.add_wrapped(wrap_pyfunction!(shuffle_file))?;
-    //m.add_wrapped(wrap_pyfunction!(balance_sequences))?;
-
-    // Need a function to get the parents
-    // Need a function to get the parents & ranks given a taxon (or accession)
     Ok(())
 }
 
