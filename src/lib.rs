@@ -325,7 +325,7 @@ fn get_parent_taxons_names(taxon: usize) -> Vec<(usize, String)> {
 }
 
 #[pyfunction]
-fn get_child_taxons_names(parent_taxon: usize) -> Vec<(usize, String)> {
+pub fn get_child_taxons_names(parent_taxon: usize) -> Vec<(usize, String)> {
     let child_taxons = get_child_taxons(parent_taxon);
     let mut child_taxons_names = Vec::with_capacity(child_taxons.len());
 
