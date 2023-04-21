@@ -82,9 +82,9 @@ pub fn read_taxonomy(
             .progress_chars("█▇▆▅▄▃▂▁  "),
     );
 
-    let gb2accession_fh = BufReader::with_capacity(64 * 1024 * 1024, pb.wrap_read(gb2accession_fh));
+    let gb2accession_fh = BufReader::new(pb.wrap_read(gb2accession_fh));
     let gb2accession = flate2::read::GzDecoder::new(gb2accession_fh);
-    let gb2accession = BufReader::with_capacity(256 * 1024 * 1024, gb2accession);
+    let gb2accession = BufReader::new(gb2accession);
     let backoff = Backoff::new();
 
     let mut children = Vec::new();
@@ -115,7 +115,7 @@ pub fn read_taxonomy(
         .byte_lines()
         .into_iter()
         .skip(1)
-        .chunks(8 * 1024 * 1024)
+        .chunks(2 * 1024 * 1024)
         .into_iter()
     {
         let work = chunk.map(|x| x.unwrap()).collect::<Vec<Vec<u8>>>();
