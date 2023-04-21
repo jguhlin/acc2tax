@@ -115,7 +115,7 @@ pub fn read_taxonomy(
         .byte_lines()
         .into_iter()
         .skip(1)
-        .chunks(32 * 1024)
+        .chunks(128 * 1024)
         .into_iter()
     {
         let work = chunk.map(|x| x.unwrap()).collect::<Vec<Vec<u8>>>();
@@ -195,6 +195,8 @@ fn _worker_thread(
             for (x, y) in result {
                 table.insert(x.as_str(), y).expect("Unable to insert");
             }
+            drop(table);
+            write_txn.commit().expect("Unable to commit transaction");
 
             jobs.fetch_sub(1);
         } else {
