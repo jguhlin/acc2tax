@@ -265,7 +265,7 @@ fn get_taxons_count() -> usize {
 }
 
 #[pyfunction]
-fn get_child_taxons(parent_taxon: usize) -> Vec<usize> {
+pub fn get_child_taxons(parent_taxon: usize) -> Vec<usize> {
     let mut child_taxons: Vec<usize>; // = Vec::with_capacity(1000);
 
     let taxon_to_parent = TAXON2PARENT.get().expect("Data not initialized!");
