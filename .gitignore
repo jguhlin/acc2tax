@@ -19,3 +19,4 @@ acc2tax_db/*
 .vstags
 *.log
 /acc2tax.db
+*.lock
