@@ -1,6 +1,6 @@
-use byteorder::{BigEndian, LittleEndian};
 use byteorder::ByteOrder;
-use rocksdb::{Options, DB};
+use byteorder::{BigEndian, LittleEndian};
+use redb::{Database, Error, ReadableTable, TableDefinition};
 
 use mimalloc::MiMalloc;
 #[global_allocator]
@@ -13,7 +13,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::str;
-use std::sync::Arc;
+use std::sync::{RwLock, Arc};
 use std::thread::Builder;
 
 use once_cell::sync::OnceCell;
@@ -38,8 +38,10 @@ pub type Result = (String, u32);
 static NAMES: OnceCell<Vec<String>> = OnceCell::new();
 static TAXON2PARENT: OnceCell<Vec<usize>> = OnceCell::new();
 static TAXON_RANK: OnceCell<Vec<String>> = OnceCell::new();
-static ACC2TAX: OnceCell<Arc<DB>> = OnceCell::new();
+static ACC2TAX: OnceCell<Arc<Database>> = OnceCell::new();
 static TAXIDS: OnceCell<Vec<u32>> = OnceCell::new();
+
+const TABLE: TableDefinition<&str, u32> = TableDefinition::new("acc2tax");
 
 #[pyfunction]
 pub fn get_taxon(accession: String) -> u32 {
@@ -48,38 +50,44 @@ pub fn get_taxon(accession: String) -> u32 {
         .take(1)
         .collect::<String>();
     let acc2tax = ACC2TAX.get().expect("Data not initialized");
-    let x = match acc2tax.get(accession) {
-        Ok(x) => x,
+    let read_txn = acc2tax.begin_read().unwrap();
+    let table = read_txn.open_table(TABLE).unwrap();
+    
+    let x = match table.get(accession.as_str()) {
+        Ok(x) => x.unwrap().value(),
         Err(y) => panic!("DB Error: {}", y),
     };
 
-    match x {
-        None => 0,
-        Some(x) => LittleEndian::read_u32(&x),
-    }
+    x
 }
 
 fn load_existing() -> (Vec<String>, Vec<u32>, Vec<usize>, Vec<String>) {
     let names_fh = BufReader::with_capacity(2 * 1024 * 1024, File::open("names.bc").unwrap());
     let bincoded: Vec<u8> = bincode::deserialize_from(names_fh).expect("unable to read names.bc");
     let decompressed = zstd::stream::decode_all(&bincoded[..]).expect("unable to read names.bc");
-    let names: Vec<String>  = bincode::deserialize_from(&decompressed[..]).expect("Unable to read file...");
+    let names: Vec<String> =
+        bincode::deserialize_from(&decompressed[..]).expect("Unable to read file...");
 
     let taxids_fh = BufReader::with_capacity(2 * 1024 * 1024, File::open("taxids.bc").unwrap());
     let bincoded: Vec<u8> = bincode::deserialize_from(taxids_fh).expect("unable to read taxids.bc");
     let decompressed = zstd::stream::decode_all(&bincoded[..]).expect("unable to read taxids.bc");
-    let taxids: Vec<u32>  = bincode::deserialize_from(&decompressed[..]).expect("Unable to read file...");
+    let taxids: Vec<u32> =
+        bincode::deserialize_from(&decompressed[..]).expect("Unable to read file...");
 
     let t2p_fh = BufReader::with_capacity(2 * 1024 * 1024, File::open("t2p.bc").unwrap());
     let bincoded: Vec<u8> = bincode::deserialize_from(t2p_fh).expect("unable to read t2p.bc");
     let decompressed = zstd::stream::decode_all(&bincoded[..]).expect("unable to read t2p.bc");
-    let taxon_to_parent: Vec<usize>  = bincode::deserialize_from(&decompressed[..]).expect("Unable to read file...");
+    let taxon_to_parent: Vec<usize> =
+        bincode::deserialize_from(&decompressed[..]).expect("Unable to read file...");
 
     let taxon_rank_fh =
         BufReader::with_capacity(2 * 1024 * 1024, File::open("taxon_rank.bc").unwrap());
-    let bincoded: Vec<u8> = bincode::deserialize_from(taxon_rank_fh).expect("unable to read taxon_rank.bc");
-    let decompressed = zstd::stream::decode_all(&bincoded[..]).expect("unable to read taxon_rank.bc");
-    let taxon_rank: Vec<String>  = bincode::deserialize_from(&decompressed[..]).expect("Unable to read file...");
+    let bincoded: Vec<u8> =
+        bincode::deserialize_from(taxon_rank_fh).expect("unable to read taxon_rank.bc");
+    let decompressed =
+        zstd::stream::decode_all(&bincoded[..]).expect("unable to read taxon_rank.bc");
+    let taxon_rank: Vec<String> =
+        bincode::deserialize_from(&decompressed[..]).expect("Unable to read file...");
 
     (names, taxids, taxon_to_parent, taxon_rank)
 }
@@ -163,9 +171,6 @@ pub fn init(
 
     let (data, names, taxon_to_parent, taxon_rank, taxids);
 
-    let mut rockoptions = Options::default();
-    rockoptions.increase_parallelism(num_threads as i32);
-    rockoptions.set_level_compaction_dynamic_level_bytes(true);
 
     // let a2tdb = Arc::new(sledconfig.open().expect("Unable to open database path, delete existing acc2tax.db and re-initialize. Check for free space on device."));
     // let a2tdb: Arc<sled::Db> = Arc::new(sled::open("acc2tax.db").expect("Unable to open database path, delete existing acc2tax.db and re-initialize. Check for free space on device."));
@@ -173,12 +178,13 @@ pub fn init(
         // if a2tdb.len() > 0 {
         data = load_existing();
     } else {
-        let mut writeoptions = rockoptions.clone();
-        writeoptions.create_if_missing(true);
-        writeoptions.prepare_for_bulk_load();
+        // let mut writeoptions = rockoptions.clone();
+        // writeoptions.create_if_missing(true);
+        // writeoptions.prepare_for_bulk_load();
 
-        let a2tdb =
-            Arc::new(DB::open(&writeoptions, "acc2tax.db").expect("Unable to open db for writing"));
+        let db = Database::create("acc2tax.db").expect("Unable to create database");
+
+        let a2tdb = Arc::new(db);
 
         println!("Binary files do not exist, generating... This can take up to 60 minutes the first time...");
         println!("Processing acc2tax file");
@@ -195,38 +201,38 @@ pub fn init(
         let mut names_fh = File::create("names.bc").unwrap();
         let bincoded = bincode::serialize(&data.0).expect("Unable to write to bincode file");
         let compressed = zstd::encode_all(&bincoded[..], -3).expect("Unable to compress");
-        bincode::serialize_into(&mut names_fh, &compressed).expect("Unable to write to bincode file");
+        bincode::serialize_into(&mut names_fh, &compressed)
+            .expect("Unable to write to bincode file");
         drop(names_fh);
 
         let mut taxids_fh = File::create("taxids.bc").unwrap();
         let bincoded = bincode::serialize(&data.1).expect("Unable to write to bincode file");
         let compressed = zstd::encode_all(&bincoded[..], -3).expect("Unable to compress");
-        bincode::serialize_into(&mut taxids_fh, &compressed).expect("Unable to write to bincode file");
+        bincode::serialize_into(&mut taxids_fh, &compressed)
+            .expect("Unable to write to bincode file");
         drop(taxids_fh);
-        
+
         println!("Processing taxon to parent file");
         let mut taxon_to_parent_fh = File::create("t2p.bc").unwrap();
         let bincoded = bincode::serialize(&data.2).expect("Unable to write to bincode file");
         let compressed = zstd::encode_all(&bincoded[..], -3).expect("Unable to compress");
-        bincode::serialize_into(&mut taxon_to_parent_fh, &compressed).expect("Unable to write to bincode file");
+        bincode::serialize_into(&mut taxon_to_parent_fh, &compressed)
+            .expect("Unable to write to bincode file");
         drop(taxon_to_parent_fh);
 
         println!("Processing taxon rank file");
         let mut taxon_rank_fh = File::create("taxon_rank.bc").unwrap();
         let bincoded = bincode::serialize(&data.3).expect("Unable to write to bincode file");
         let compressed = zstd::encode_all(&bincoded[..], -3).expect("Unable to compress");
-        bincode::serialize_into(&mut taxon_rank_fh, &compressed).expect("Unable to write to bincode file");
+        bincode::serialize_into(&mut taxon_rank_fh, &compressed)
+            .expect("Unable to write to bincode file");
         drop(taxon_rank_fh);
 
         println!("Finished... Flushing and compacting database...");
-        a2tdb.flush().expect("Unable to flush");
-        a2tdb.compact_range(None::<&[u8]>, None::<&[u8]>);
     }
 
-    let a2tdb = Arc::new(
-        DB::open(&rockoptions, "acc2tax.db")
-            .expect("Unable to open database path, delete existing acc2tax.db and re-initialize"),
-    );
+    let db = Database::create("acc2tax.db").expect("Unable to create database");
+    let a2tdb = Arc::new(db);
 
     names = data.0;
     taxids = data.1;
@@ -341,7 +347,12 @@ pub fn get_taxon_rank(taxon: usize) -> String {
 #[pyfunction]
 pub fn get_taxon_ranks() -> Vec<String> {
     let taxon_rank = TAXON_RANK.get().expect("Taxon Rank not initialized");
-    taxon_rank.into_iter().collect::<HashSet<&String>>().into_iter().map(|x| x.to_string()).collect()
+    taxon_rank
+        .into_iter()
+        .collect::<HashSet<&String>>()
+        .into_iter()
+        .map(|x| x.to_string())
+        .collect()
 }
 
 #[pyfunction]

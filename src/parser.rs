@@ -1,8 +1,8 @@
 use super::*;
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
-use rocksdb::{WriteBatch, DB};
 use zerocopy::{AsBytes, U32};
+use redb::{Database, Error, ReadableTable, TableDefinition, Table};
 
 use std::collections::HashSet;
 
@@ -51,7 +51,7 @@ fn parse_line(line: &[u8]) -> Result {
 
 pub fn read_taxonomy(
     num_threads: usize,
-    a2tdb: Arc<DB>,
+    a2tdb: Arc<Database>,
     acc2tax_filename: String,
     nodes_filename: String,
     names_filename: String,
@@ -171,7 +171,7 @@ pub fn read_taxonomy(
 
 fn _worker_thread(
     queue: Arc<ArrayQueue<ThreadCommand<Vec<Vec<u8>>>>>,
-    a2tdb: Arc<DB>,
+    a2tdb: Arc<Database>,
     jobs: Arc<AtomicCell<usize>>,
 ) {
     let backoff = Backoff::new();
@@ -189,13 +189,12 @@ fn _worker_thread(
                 .map(|x| parse_line(&x))
                 .collect::<Vec<Result>>();
 
-            let mut batch = WriteBatch::default();
+            let write_txn = a2tdb.begin_write().expect("Unable to begin read transaction");
+            let mut table = write_txn.open_table(TABLE).expect("Unable to open table");
 
             for (x, y) in result {
-                batch.put(x.as_bytes(), y.as_bytes());
+                table.insert(x.as_str(), y).expect("Unable to insert");
             }
-
-            a2tdb.write(batch).expect("Unable to write batch");
 
             jobs.fetch_sub(1);
         } else {

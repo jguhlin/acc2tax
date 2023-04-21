@@ -12,7 +12,10 @@ fn process_taxonomy() {
         "/mnt/data/nt/taxdmp/nodes.dmp".to_string(),
         "/mnt/data/nt/taxdmp/names.dmp".to_string(),
     );
-    println!("Time to parse and save file... {} seconds", now.elapsed().as_secs());
+    println!(
+        "Time to parse and save file... {} seconds",
+        now.elapsed().as_secs()
+    );
 
     assert_eq!(
         acc2tax::get_taxon("X59856.2".to_string()),
@@ -20,7 +23,11 @@ fn process_taxonomy() {
         "Get taxon error"
     );
 
-    assert_eq!(acc2tax::get_taxon_rank(9913), "species", "Get taxon rank error");
+    assert_eq!(
+        acc2tax::get_taxon_rank(9913),
+        "species",
+        "Get taxon rank error"
+    );
 
     assert_eq!(
         acc2tax::get_complete_taxonomy(9913),
@@ -35,5 +42,44 @@ fn process_taxonomy() {
     let mut ranks = acc2tax::get_taxon_ranks();
     ranks.sort();
 
-    assert_eq!(ranks, ["", "class", "cohort", "family", "forma", "genus", "infraclass", "infraorder", "kingdom", "no rank", "order", "parvorder", "phylum", "section", "series", "species", "species group", "species subgroup", "subclass", "subcohort", "subfamily", "subgenus", "subkingdom", "suborder", "subphylum", "subsection", "subspecies", "subtribe", "superclass", "superfamily", "superkingdom", "superorder", "superphylum", "tribe", "varietas"]);
+    assert_eq!(
+        ranks,
+        [
+            "",
+            "class",
+            "cohort",
+            "family",
+            "forma",
+            "genus",
+            "infraclass",
+            "infraorder",
+            "kingdom",
+            "no rank",
+            "order",
+            "parvorder",
+            "phylum",
+            "section",
+            "series",
+            "species",
+            "species group",
+            "species subgroup",
+            "subclass",
+            "subcohort",
+            "subfamily",
+            "subgenus",
+            "subkingdom",
+            "suborder",
+            "subphylum",
+            "subsection",
+            "subspecies",
+            "subtribe",
+            "superclass",
+            "superfamily",
+            "superkingdom",
+            "superorder",
+            "superphylum",
+            "tribe",
+            "varietas"
+        ]
+    );
 }

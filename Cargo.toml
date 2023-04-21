@@ -26,16 +26,12 @@ zerocopy = {version = "0.6.1", features = ["alloc", "simd"]}
 rayon = "1.6.1"
 byteorder = "1.4.3"
 zstd = "0.12.3"
+redb = "0.15.0"
 
 
 [dependencies.pyo3]
 version = "0.18.1"
 features = ["extension-module"]
-
-[dependencies.rocksdb]
-version = "0.19.0"
-default-features = false
-features = ["zstd"]
 
 [profile.dev]
 # opt-level = 3
