@@ -2,10 +2,6 @@ use byteorder::ByteOrder;
 use byteorder::{BigEndian, LittleEndian};
 use redb::{Database, Error, ReadableTable, TableDefinition};
 
-use mimalloc::MiMalloc;
-#[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
-
 mod parser;
 
 use std::collections::{HashMap, HashSet};
