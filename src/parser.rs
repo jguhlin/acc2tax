@@ -115,7 +115,7 @@ pub fn read_taxonomy(
         .byte_lines()
         .into_iter()
         .skip(1)
-        .chunks(2 * 1024 * 1024)
+        .chunks(64 * 1024 * 1024)
         .into_iter()
     {
         let work = chunk.map(|x| x.unwrap()).collect::<Vec<Vec<u8>>>();
