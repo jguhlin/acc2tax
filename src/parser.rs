@@ -123,10 +123,10 @@ pub fn read_taxonomy(
         .map(|x| parse_line(&x.unwrap()))
     {
 
-        lines += 1;
-        pb.set_message(format!("{} lines", lines));
+        // lines += 1;
+        // pb.set_message(format!("{} lines", lines));
 
-        jobs.fetch_add(1);
+        // jobs.fetch_add(1);
 
         table.insert(id.as_str(), val).expect("Unable to insert");
     }
