@@ -58,26 +58,26 @@ pub fn get_taxon(accession: String) -> u32 {
 }
 
 fn load_existing() -> (Vec<String>, Vec<u32>, Vec<usize>, Vec<String>) {
-    let names_fh = BufReader::with_capacity(2 * 1024 * 1024, File::open("names.bc").unwrap());
+    let names_fh = BufReader::new(File::open("names.bc").unwrap());
     let bincoded: Vec<u8> = bincode::deserialize_from(names_fh).expect("unable to read names.bc");
     let decompressed = zstd::stream::decode_all(&bincoded[..]).expect("unable to read names.bc");
     let names: Vec<String> =
         bincode::deserialize_from(&decompressed[..]).expect("Unable to read file...");
 
-    let taxids_fh = BufReader::with_capacity(2 * 1024 * 1024, File::open("taxids.bc").unwrap());
+    let taxids_fh = BufReader::new(File::open("taxids.bc").unwrap());
     let bincoded: Vec<u8> = bincode::deserialize_from(taxids_fh).expect("unable to read taxids.bc");
     let decompressed = zstd::stream::decode_all(&bincoded[..]).expect("unable to read taxids.bc");
     let taxids: Vec<u32> =
         bincode::deserialize_from(&decompressed[..]).expect("Unable to read file...");
 
-    let t2p_fh = BufReader::with_capacity(2 * 1024 * 1024, File::open("t2p.bc").unwrap());
+    let t2p_fh = BufReader::new(File::open("t2p.bc").unwrap());
     let bincoded: Vec<u8> = bincode::deserialize_from(t2p_fh).expect("unable to read t2p.bc");
     let decompressed = zstd::stream::decode_all(&bincoded[..]).expect("unable to read t2p.bc");
     let taxon_to_parent: Vec<usize> =
         bincode::deserialize_from(&decompressed[..]).expect("Unable to read file...");
 
     let taxon_rank_fh =
-        BufReader::with_capacity(2 * 1024 * 1024, File::open("taxon_rank.bc").unwrap());
+        BufReader::new(File::open("taxon_rank.bc").unwrap());
     let bincoded: Vec<u8> =
         bincode::deserialize_from(taxon_rank_fh).expect("unable to read taxon_rank.bc");
     let decompressed =

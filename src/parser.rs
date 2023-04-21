@@ -87,11 +87,12 @@ pub fn read_taxonomy(
     let gb2accession = BufReader::new(gb2accession);
     let backoff = Backoff::new();
 
-    let mut children = Vec::new();
-    let queue = Arc::new(ArrayQueue::<ThreadCommand<Vec<Vec<u8>>>>::new(2048));
+    // let mut children = Vec::new();
+    //let queue = Arc::new(ArrayQueue::<ThreadCommand<Vec<Vec<u8>>>>::new(2048));
 
-    let jobs = Arc::new(AtomicCell::new(0));
+    let jobs = Arc::new(AtomicCell::new(0_usize));
 
+/*
     for _ in 0..num_threads {
         let queue = Arc::clone(&queue);
         let jobs = Arc::clone(&jobs);
@@ -105,33 +106,33 @@ pub fn read_taxonomy(
             Err(y) => panic!("{}", y),
         };
         children.push(child);
-    }
+    } */
 
     jobs.fetch_add(1); // So the merger thread doesn't stop right away...
 
     let mut lines = 0;
 
-    for chunk in gb2accession
+    let write_txn = a2tdb.begin_write().expect("Unable to begin read transaction");
+    let mut table = write_txn.open_table(TABLE).expect("Unable to open table");
+
+    for (id, val) in gb2accession
         .byte_lines()
         .into_iter()
         .skip(1)
-        .chunks(128 * 1024)
-        .into_iter()
+        // .chunks(512 * 1024)
+        .map(|x| parse_line(&x.unwrap()))
     {
-        let work = chunk.map(|x| x.unwrap()).collect::<Vec<Vec<u8>>>();
 
-        lines += work.len();
+        lines += 1;
         pb.set_message(format!("{} lines", lines));
 
         jobs.fetch_add(1);
-        let wp = ThreadCommand::Work(work);
-        let mut result = queue.push(wp);
 
-        while let Err(wp) = result {
-            backoff.snooze();
-            result = queue.push(wp);
-        }
+        table.insert(id.as_str(), val).expect("Unable to insert");
     }
+
+    drop(table);
+    write_txn.commit().expect("Unable to commit transaction");
 
     pb.set_message("Completed processing all lines...");
 
@@ -143,19 +144,6 @@ pub fn read_taxonomy(
     }
 
     pb.set_message("All jobs finished...");
-
-    for _ in 0..num_threads {
-        match queue.push(ThreadCommand::Terminate) {
-            Ok(_) => (),
-            Err(_x) => panic!("Unable to send command..."),
-        }
-    }
-
-    pb.set_message("Terminate commands sent...");
-
-    for child in children {
-        child.join().expect("Unable to  join child thread");
-    }
 
     let names = names_child
         .join()
